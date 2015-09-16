@@ -5,7 +5,24 @@
 from unqlite import UnQLite
 
 import os
+import yaml
 from fnmatch import fnmatch
+
+from structlog import get_logger
+logger = get_logger()
+
+def mkFilterFunc(meta_glob):
+    def filterfunc(obj):
+        for k,pattern in meta_glob.items():
+            if k not in obj:
+                return False
+            value = obj[k]
+            if not isinstance(value, (unicode, str)):
+                value = str(value)
+            if not fnmatch(value, pattern):
+                return False
+        return True
+    return filterfunc
 
 
 class PPDInterface(object):
@@ -43,7 +60,7 @@ class PPDInterface(object):
         """
         Add objects to the object database.
         """
-        self.objects.store(objects)
+        return self.objects.store(objects)
 
 
     def listObjects(self, meta_glob=None):
@@ -53,18 +70,7 @@ class PPDInterface(object):
         if meta_glob is None:
             return self.objects.all()
         else:
-            def filterfunc(obj):
-                for k,pattern in meta_glob.items():
-                    if k not in obj:
-                        return False
-                    value = obj[k]
-                    if not isinstance(value, (unicode, str)):
-                        value = str(value)
-                    if not fnmatch(value, pattern):
-                        return False
-                return True
-            return self.objects.filter(filterfunc)
-
+            return self.objects.filter(mkFilterFunc(meta_glob))
 
 
     def addFile(self, fh, filename, metadata):
@@ -75,5 +81,63 @@ class PPDInterface(object):
         metadata = metadata.copy()
         metadata['filename'] = os.path.basename(filename)
         metadata['_file_id'] = self.files.last_record_id()
-        self.objects.store(metadata)
+        return self.objects.store(metadata)
+
+
+    def _compileLayout(self, layout):
+        if 'compiled' not in layout:
+            for rule in layout['rules']:
+                rule['fn'] = mkFilterFunc(rule['pattern'])
+                if not isinstance(rule['dst'], (list, tuple)):
+                    rule['dst'] = [rule['dst']]
+            layout['compiled'] = True
+        return layout
+
+    def dumpObjectToFiles(self, basedir, layout, obj):
+        self._compileLayout(layout)
+        file_id = obj.get('_file_id', None)
+        for rule in layout['rules']:
+            if rule['fn'](obj):
+                for dst in rule['dst']:
+                    formatted_dst = dst['path'].format(**obj)
+                    if file_id is not None:
+                        self._writeRawFile(basedir, formatted_dst, obj)
+                    else:
+                        self._mergeObjectToFile(basedir, formatted_dst, obj)
+                break
+
+    def _writeRawFile(self, basedir, dst, obj):
+        logger.msg('_writeRawFile')
+        fullpath = os.path.join(basedir, dst)
+        dirname = os.path.dirname(fullpath)
+        if not os.path.exists(dirname):
+            os.makedirs(dirname)
+
+        guts = self.files.fetch(obj['_file_id'])['content']
+        with open(fullpath, 'wb') as fh:
+            logger.msg('Writing file', fullpath=fullpath)
+            fh.write(guts)
+
+    def _mergeObjectToFile(self, basedir, dst, obj):
+        """
+
+        """
+        fullpath = os.path.join(basedir, dst)
+        dirname = os.path.dirname(fullpath)
+        if not os.path.exists(dirname):
+            os.makedirs(dirname)
+        existing = {}
+        towrite = obj
+        if os.path.exists(fullpath):
+            existing = yaml.safe_load(open(fullpath, 'rb'))
+            towrite = existing
+            towrite.update(obj)
+        if existing != towrite:
+            with open(fullpath, 'wb') as fh:
+                logger.msg('Writing', filename=fullpath)
+                fh.write(yaml.safe_dump(existing,
+                    default_flow_style=False))
+
+
+
 

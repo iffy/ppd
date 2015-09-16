@@ -19,6 +19,28 @@ def getMetadata(args):
     return {k:v for k,v in args.meta}
 
 
+#--------------------------------
+# dumping
+#--------------------------------
+def _maybeDumpObjects(ppdi, args, objects):
+    layout = yaml.safe_load(open(args.layout, 'rb'))
+    for obj in objects:
+        ppdi.dumpObjectToFiles(args.dump_dir, layout, obj)
+
+dump_parser = argparse.ArgumentParser(add_help=False)
+dump_parser.add_argument('--dump-dir', '-D',
+    default=os.environ.get('PPD_DUMP_DIRECTORY', None),
+    help='If provided, dump to the given directory.'
+         '  --layout/-L/PPD_LAYOUT must also be specified.'
+         '  You may set the PPD_DUMP_DIRECTORY env var, too.'
+         '  (current default: %(default)s)')
+dump_parser.add_argument('--layout', '-L',
+    default=os.environ.get('PPD_LAYOUT', None),
+    help='YAML file indicating how things should be dumped.'
+         '  You may also set the PPD_LAYOUT env var.'
+         '  (current default: %(default)s)')
+
+
 ap = argparse.ArgumentParser(
     description="Useful for organizing output related to pentesting")
 ap.add_argument('--verbose', '-v', action='store_true',
@@ -41,7 +63,9 @@ def read(args):
         data = [data]
     i.addObjects(data)
 
-p = cmds.add_parser('import')
+p = cmds.add_parser('import',
+    help='Import YAML objects from stdin',
+    parents=[dump_parser])
 p.set_defaults(func=read)
 
 
@@ -72,12 +96,15 @@ def attachFile(args):
     meta = getMetadata(args)
     for filename in args.filenames:
         with open(filename, 'rb') as fh:
-            i.addFile(fh, filename, meta)
+            obj_id = i.addFile(fh, filename, meta)
+            obj = i.objects.fetch(obj_id)
             logger.msg('Attached', filename=filename, meta=meta)
+            _maybeDumpObjects(i, args, [obj])
 
 
 p = cmds.add_parser('attach',
-    help='Add a file with some associated metadata')
+    help='Add a file with some associated metadata',
+    parents=[dump_parser])
 p.set_defaults(func=attachFile)
 
 p.add_argument('--meta', '-m',
@@ -97,17 +124,34 @@ def addData(args):
     logger.msg('addData', args=args)
     i = PPDInterface(args.database)
     meta = getMetadata(args)
-    i.addObjects([meta])
+    obj_id = i.addObjects([meta])
+    obj = i.objects.fetch(obj_id)
+    _maybeDumpObjects(i, args, [obj])
 
-p = cmds.add_parser('set',
-    help='Update/Create an object with the given metadata values')
+p = cmds.add_parser('add',
+    help='Create an object with the given metadata values',
+    parents=[dump_parser])
 p.set_defaults(func=addData)
-
 p.add_argument('meta',
     nargs='+',
     type=kvpairs,
     help='Metadata to be stored.'
          '  Should be of the format key:value')
+
+
+#--------------------------------
+# dump
+#--------------------------------
+def dumpData(args):
+    logger.msg('dump', args=args)
+    i = PPDInterface(args.database)
+    _maybeDumpObjects(i, args, i.listObjects())
+
+p = cmds.add_parser('dump',
+    help='Dump data to the filesystem',
+    parents=[dump_parser])
+p.set_defaults(func=dumpData)
+
 
 
 def run():
