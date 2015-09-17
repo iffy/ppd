@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # Copyright (c) The ppd team
 # See LICENSE for details.
 
