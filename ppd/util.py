@@ -7,13 +7,14 @@ import os
 import yaml
 from uuid import uuid4
 from fnmatch import fnmatch
+from functools import partial
 
 from structlog import get_logger
 logger = get_logger()
 
-def mkFilterFunc(meta_glob):
+def mkFilterFunc(filter_glob):
     def filterfunc(obj):
-        for k,pattern in meta_glob.items():
+        for k,pattern in filter_glob.items():
             if k not in obj:
                 return False
             value = obj[k]
@@ -25,7 +26,7 @@ def mkFilterFunc(meta_glob):
     return filterfunc
 
 
-class PPDInterface(object):
+class PPD(object):
 
     def __init__(self, dbfile=':mem:'):
         """
@@ -51,11 +52,11 @@ class PPDInterface(object):
         return self._objects
 
 
-    def addObjects(self, objects):
+    def addObject(self, obj):
         """
-        Add objects to the object database.
+        Add an object to the obj database.
         """
-        return self.objects.store(objects)
+        return self.objects.store(obj)
 
     def getObject(self, object_id):
         """
@@ -63,29 +64,35 @@ class PPDInterface(object):
         """
         return self.objects.fetch(object_id)
 
-    def updateObjects(self, data, meta_glob=None):
+    def updateObjects(self, data, filter_glob=None):
         """
         For each matching object, merge in the given data.
         """
         ret = []
-        for obj in self.listObjects(meta_glob):
+        for obj in self.listObjects(filter_glob):
             new_obj = obj.copy()
             new_obj.update(data)
             if new_obj != obj:
                 logger.msg('Updating', obj=new_obj)
                 self.objects.update(new_obj['__id'], new_obj)
-                ret.append(new_obj)
+            ret.append(new_obj)
         return ret
 
 
-    def listObjects(self, meta_glob=None):
+    def listObjects(self, filter_glob=None, id_only=False):
         """
         List objects in the object database.
         """
-        if meta_glob is None:
-            return self.objects.all()
+        func = None
+        if filter_glob is None:
+            func = partial(self.objects.all)
         else:
-            return self.objects.filter(mkFilterFunc(meta_glob))
+            func = partial(self.objects.filter, mkFilterFunc(filter_glob))
+
+        if id_only:
+            return [x['__id'] for x in func()]
+        else:
+            return func()
 
 
     def addFile(self, fh, filename, metadata):
@@ -160,6 +167,10 @@ class PPDInterface(object):
                 fh.write(yaml.safe_dump(existing,
                     default_flow_style=False))
 
+
+class RuleBasedFileDumper(object):
+
+    pass
 
 
 

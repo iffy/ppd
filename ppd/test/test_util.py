@@ -4,20 +4,157 @@
 from unittest import TestCase
 from StringIO import StringIO
 
-from ppd.util import PPDInterface
+from ppd.util import PPD, RuleBasedFileDumper
 
 
-class PPDInterfaceTest(TestCase):
+class PPDTest(TestCase):
+
+    def test_addObject(self):
+        """
+        You can add an object.
+        """
+        i = PPD()
+        object_id = i.addObject({'foo': 'bar'})
+        obj = i.getObject(object_id)
+        self.assertEqual(obj['foo'], 'bar')
+        self.assertEqual(obj['__id'], object_id)
+
+
+    def test_listObjects_all(self):
+        """
+        You can list all objects.
+        """
+        i = PPD()
+        id1 = i.addObject({'foo': 'bar'})
+        id2 = i.addObject({'hey': 'ho'})
+        objects = i.listObjects()
+        obj1 = i.getObject(id1)
+        obj2 = i.getObject(id2)
+        self.assertEqual(objects, [obj1, obj2],
+            "Should return both objects")
+
+
+    def test_listObjects_globFilter_value(self):
+        """
+        You can filter objects by glob pattern.
+        """
+        i = PPD()
+        id1 = i.addObject({'foo': 'bar'})
+        i.addObject({'hey': 'ho'})
+        obj1 = i.getObject(id1)
+
+        objects = i.listObjects({'foo': 'bar'})
+        self.assertEqual(objects, [obj1])
+
+        objects = i.listObjects({'foo': 'b*'})
+        self.assertEqual(objects, [obj1])
+
+
+    def test_listObjects_id(self):
+        """
+        You can just list object ids.
+        """
+        i = PPD()
+        id1 = i.addObject({'foo': 'bar'})
+        id2 = i.addObject({'hey': 'ho'})
+
+        objects = i.listObjects(id_only=True)
+        self.assertEqual(objects, [id1, id2])
+
+        objects = i.listObjects({'foo': 'bar'}, id_only=True)
+        self.assertEqual(objects, [id1])
+
+        objects = i.listObjects({'foo': 'b*'}, id_only=True)
+        self.assertEqual(objects, [id1])
+
+
+    def test_updateObjects(self):
+        """
+        You can update all objects.
+        """
+        i = PPD()
+        id1 = i.addObject({'foo': 'bar'})
+        id2 = i.addObject({'hey': 'ho'})
+
+        objects = i.updateObjects({'A': 'A'})
+        self.assertEqual(len(objects), 2, "Should return matched objects")
+        self.assertEqual(objects[0], {
+            '__id': id1,
+            'foo': 'bar',
+            'A': 'A',
+        })
+        self.assertEqual(objects[1], {
+            '__id': id2,
+            'hey': 'ho',
+            'A': 'A',
+        })
+
+
+    def test_updateObjects_filter(self):
+        """
+        You can update some objects.
+        """
+        i = PPD()
+        id1 = i.addObject({'foo': 'bar'})
+        id2 = i.addObject({'hey': 'ho'})
+
+        objects = i.updateObjects({'A': 'A'}, {'foo': '*'})
+        self.assertEqual(len(objects), 1, "Should return matched objects")
+        self.assertEqual(objects[0], {
+            '__id': id1,
+            'foo': 'bar',
+            'A': 'A',
+        })
+
+        objects = i.listObjects()
+        self.assertEqual(objects[1], {
+            '__id': id2,
+            'hey': 'ho',
+        }, "Should have left other object alone")
+
+
+    def test_updateObjects_noChange(self):
+        """
+        Matched objects should be returned whether they were updated or not.
+        """
+        i = PPD()
+        id1 = i.addObject({'foo': 'bar'})
+        id2 = i.addObject({'hey': 'ho'})
+
+        objects = i.updateObjects({'foo': 'bar'}, {'foo': '*'})
+        self.assertEqual(len(objects), 1,
+            "Should return matching objects")
+        self.assertEqual(objects[0], {
+            '__id': id1,
+            'foo': 'bar',
+        })
 
 
     def test_addFile_getFile(self):
         """
         You can add a file and get the contents back.
         """
-        i = PPDInterface()
+        i = PPD()
         fh = StringIO('\x00\x01Hey\xff')
-        obj_id = i.addFile(fh, 'something.exe', {})
+        obj_id = i.addFile(fh, 'something.exe', {'hey': 'ho'})
         obj = i.getObject(obj_id)
+        self.assertEqual(obj['filename'], 'something.exe')
+        self.assertEqual(obj['hey'], 'ho')
         contents = i.getFileContents(obj['_file_id'])
         self.assertEqual(contents, '\x00\x01Hey\xff',
             "Should return the contents provided when attaching the file")
+
+
+class RuleBasedFileDumperTest(TestCase):
+
+
+    def test_merge_yaml_firstTime(self):
+        """
+        You can write the object as YAML to a file.
+        """
+        
+
+
+class PPD_autoDumpTest(TestCase):
+
+    pass
