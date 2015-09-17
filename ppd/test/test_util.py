@@ -242,6 +242,84 @@ class RuleBasedFileDumperTest(TestCase):
             "Should have written out the combined YAML data: %r" % (content,))
         self.assertEqual(len(reported), 1,
             "Should have reported the write because something changed.")
+
+
+    def test_write_file(self):
+        """
+        You can write file contents out for file objects.
+        """
+        ppd = PPD()
+        obj_id = ppd.addFile(StringIO('foo bar'), 'joe.txt', {'meta': 'data'})
+        obj = ppd.getObject(obj_id)
+
+        tmpdir = FilePath(self.mktemp())
+        reported = []
+        dumper = RuleBasedFileDumper(tmpdir.path, ppd=ppd,
+            reporter=reported.append)
+        dumper.performAction({
+            'write_file': 'foo/bar/{filename}',
+        }, obj)
+
+        exp = tmpdir.child('foo').child('bar').child('joe.txt')
+        self.assertTrue(exp.exists())
+        self.assertEqual(exp.getContent(), 'foo bar')
+
+        self.assertEqual(len(reported), 1,
+            "Should have reported the write because something changed")
+
+
+    def test_write_file_noChange(self):
+        """
+        Should not write the file the second time if nothing changed.
+        """
+        ppd = PPD()
+        obj_id = ppd.addFile(StringIO('foo bar'), 'joe.txt', {'meta': 'data'})
+        obj = ppd.getObject(obj_id)
+
+        tmpdir = FilePath(self.mktemp())
+        reported = []
+        dumper = RuleBasedFileDumper(tmpdir.path, ppd=ppd,
+            reporter=reported.append)
+        dumper.performAction({
+            'write_file': 'foo/bar/{filename}',
+        }, obj)
+        reported.pop()
+        dumper.performAction({
+            'write_file': 'foo/bar/{filename}',
+        }, obj)
+
+        self.assertEqual(len(reported), 0,
+            "Should not have reported the write because nothing changed")
+
+
+    def test_write_file_change(self):
+        """
+        Should write the file again if it changed.
+        """
+        ppd = PPD()
+        id1 = ppd.addFile(StringIO('foo bar'), 'joe.txt', {'meta': 'a'})
+        id2 = ppd.addFile(StringIO('baz who'), 'joe.txt', {'meta': 'b'})
+        
+        obj1 = ppd.getObject(id1)
+        obj2 = ppd.getObject(id2)
+
+        tmpdir = FilePath(self.mktemp())
+        reported = []
+        dumper = RuleBasedFileDumper(tmpdir.path, ppd=ppd,
+            reporter=reported.append)
+        dumper.performAction({
+            'write_file': 'foo/bar/{filename}',
+        }, obj1)
+        reported.pop()
+        dumper.performAction({
+            'write_file': 'foo/bar/{filename}',
+        }, obj2)
+
+        exp = tmpdir.child('foo').child('bar').child('joe.txt')
+        self.assertTrue(exp.exists())
+        self.assertEqual(exp.getContent(), 'baz who')
+        self.assertEqual(len(reported), 1,
+            "Should have reported the write because something changed")
         
 
 
