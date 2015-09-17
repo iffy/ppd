@@ -170,7 +170,44 @@ class PPD(object):
 
 class RuleBasedFileDumper(object):
 
-    pass
+    
+    def __init__(self, root, reporter=None):
+        self.root = root
+        self.reporter = reporter or (lambda x:None)
+
+
+    def performAction(self, action, obj):
+        """
+        Perform a single action on a single object.
+        """
+        if 'merge_yaml' in action:
+            self._perform_merge_yaml(action, obj)
+
+
+    def _perform_merge_yaml(self, action, obj):
+        """
+        Perform merge_yaml
+        """
+        filename = action['merge_yaml'].format(**obj)
+        fullpath = os.path.join(self.root, filename)
+        dirname = os.path.dirname(fullpath)
+        if not os.path.exists(dirname):
+            os.makedirs(dirname)
+
+        current_val = None
+        if os.path.exists(fullpath):
+            with open(fullpath, 'rb') as fh:
+                current_val = yaml.safe_load(fh)
+
+        new_val = {}
+        if current_val:
+            new_val = current_val.copy()
+        new_val.update(obj)
+
+        if new_val != current_val:
+            with open(fullpath, 'wb') as fh:
+                fh.write(yaml.safe_dump(new_val, default_flow_style=False))
+                self.reporter('wrote {0}'.format(filename))
 
 
 

@@ -1,9 +1,11 @@
 # Copyright (c) The ppd team
 # See LICENSE for details.
 
-from unittest import TestCase
+from twisted.trial.unittest import TestCase
+from twisted.python.filepath import FilePath
 from StringIO import StringIO
 
+import yaml
 from ppd.util import PPD, RuleBasedFileDumper
 
 
@@ -152,6 +154,94 @@ class RuleBasedFileDumperTest(TestCase):
         """
         You can write the object as YAML to a file.
         """
+        tmpdir = FilePath(self.mktemp())
+        reported = []
+        obj = {
+            '__id': 45,
+            'name': 'hi',
+            'guy': 'smiley',
+        }
+        dumper = RuleBasedFileDumper(tmpdir.path, reporter=reported.append)
+        dumper.performAction({
+            'merge_yaml': 'foo/bar/{__id}.yml',
+        }, obj)
+
+        yml = tmpdir.child('foo').child('bar').child('45.yml')
+        self.assertTrue(yml.exists(), "Should have created the file")
+
+        content = yaml.safe_load(yml.getContent())
+        self.assertEqual(content, obj,
+            "Should have written out the YAML data.")
+        self.assertEqual(len(reported), 1, "Should have reported the write")
+
+
+    def test_merge_yaml_noChange(self):
+        """
+        When merging YAML, if there's no change, don't report the file as
+        having been written.
+        """
+        tmpdir = FilePath(self.mktemp())
+        reported = []
+        obj = {
+            '__id': 45,
+            'name': 'hi',
+            'guy': 'smiley',
+        }
+        dumper = RuleBasedFileDumper(tmpdir.path, reporter=reported.append)
+        dumper.performAction({
+            'merge_yaml': 'foo/bar/{__id}.yml',
+        }, obj)
+        reported.pop()
+        dumper.performAction({
+            'merge_yaml': 'foo/bar/{__id}.yml',
+        }, obj)
+
+        yml = tmpdir.child('foo').child('bar').child('45.yml')
+        self.assertTrue(yml.exists(), "Should have created the file")
+
+        content = yaml.safe_load(yml.getContent())
+        self.assertEqual(content, obj,
+            "Should have written out the YAML data.")
+        self.assertEqual(len(reported), 0,
+            "Should not have reported the write because nothing changed.")
+
+
+    def test_merge_yaml_change(self):
+        """
+        When merging YAML, if there's a change, report the file as
+        having been written.
+        """
+        tmpdir = FilePath(self.mktemp())
+        reported = []
+        obj = {
+            '__id': 45,
+            'name': 'hi',
+            'guy': 'smiley',
+        }
+        dumper = RuleBasedFileDumper(tmpdir.path, reporter=reported.append)
+        dumper.performAction({
+            'merge_yaml': 'foo/bar/{__id}.yml',
+        }, obj)
+        reported.pop()
+        dumper.performAction({
+            'merge_yaml': 'foo/bar/{__id}.yml',
+        }, {
+            '__id': 45,
+            'name': 'bob',
+        })
+
+        yml = tmpdir.child('foo').child('bar').child('45.yml')
+        self.assertTrue(yml.exists(), "Should have created the file")
+
+        content = yaml.safe_load(yml.getContent())
+        self.assertEqual(content, {
+            '__id': 45,
+            'name': 'bob',
+            'guy': 'smiley',
+        },
+            "Should have written out the combined YAML data: %r" % (content,))
+        self.assertEqual(len(reported), 1,
+            "Should have reported the write because something changed.")
         
 
 
