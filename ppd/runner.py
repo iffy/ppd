@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # Copyright (c) The ppd team
 # See LICENSE for details.
 
@@ -18,14 +17,31 @@ def kvpairs(s):
 def getMetadata(args):
     return {k:v for k,v in args.meta}
 
+#--------------------------------
+# filtering
+#--------------------------------
+
+def getFilter(args):
+    return {k:v for k,v in args.filter}
+
+filter_parser = argparse.ArgumentParser(add_help=False)
+filter_parser.add_argument('--filter', '-f',
+    default=[],
+    action='append',
+    type=kvpairs,
+    help='Metadata to filter by.'
+         '  Should be of the format key:glob_pattern')
+
 
 #--------------------------------
 # dumping
 #--------------------------------
 def _maybeDumpObjects(ppdi, args, objects):
-    layout = yaml.safe_load(open(args.layout, 'rb'))
-    for obj in objects:
-        ppdi.dumpObjectToFiles(args.dump_dir, layout, obj)
+    # XXX this should be rolled into PPDInterface and tested.
+    if args.layout and args.dump_dir:
+        layout = yaml.safe_load(open(args.layout, 'rb'))
+        for obj in objects:
+            ppdi.dumpObjectToFiles(args.dump_dir, layout, obj)
 
 dump_parser = argparse.ArgumentParser(add_help=False)
 dump_parser.add_argument('--dump-dir', '-D',
@@ -74,12 +90,80 @@ p.set_defaults(func=read)
 #--------------------------------
 def listObjects(args):
     i = PPDInterface(args.database)
-    meta_glob = getMetadata(args)
+    meta_glob = getFilter(args)
     objects = i.listObjects(meta_glob)
-    sys.stdout.write(yaml.safe_dump(objects, default_flow_style=False))
+    if args.id:
+        for obj in objects:
+            sys.stdout.write(str(obj['__id'])+'\n')
+    else:
+        sys.stdout.write(yaml.safe_dump(objects, default_flow_style=False))
 
-p = cmds.add_parser('list')
+p = cmds.add_parser('list',
+    help='List objects matching certain criteria.',
+    parents=[filter_parser])
 p.set_defaults(func=listObjects)
+
+p.add_argument('--id', '-i',
+    action='store_true',
+    default=False,
+    help='Return only the object ids, one per line')
+
+
+#--------------------------------
+# add
+#--------------------------------
+def addObject(args):
+    logger.msg('addObject', args=args)
+    i = PPDInterface(args.database)
+    meta = getMetadata(args)
+    obj_id = i.addObjects([meta])
+    obj = i.objects.fetch(obj_id)
+    _maybeDumpObjects(i, args, [obj])
+
+p = cmds.add_parser('add',
+    help='Create an object with the given metadata values',
+    parents=[dump_parser])
+p.set_defaults(func=addObject)
+p.add_argument('meta',
+    nargs='+',
+    type=kvpairs,
+    help='Metadata to be stored.'
+         '  Should be of the format key:value')
+
+#--------------------------------
+# get
+#--------------------------------
+def getObject(args):
+    logger.msg('get', args=args)
+    i = PPDInterface(args.database)
+    ret = []
+    for object_id in args.object_ids:
+        ret.append(i.getObject(object_id))
+    sys.stdout.write(yaml.safe_dump(ret, default_flow_style=False))
+
+p = cmds.add_parser('get',
+    help='Get a objects by ids')
+p.set_defaults(func=getObject)
+p.add_argument('object_ids',
+    type=int,
+    nargs='+',
+    help='ID of objects to get')
+
+#--------------------------------
+# update
+#--------------------------------
+def updateObjects(args):
+    logger.msg('update', args=args)
+    meta_glob = getFilter(args)
+    data = getMetadata(args)
+    i = PPDInterface(args.database)
+    objects = i.updateObjects(data, meta_glob)
+    _maybeDumpObjects(i, args, objects)
+
+p = cmds.add_parser('update',
+    help='Update objects',
+    parents=[dump_parser, filter_parser])
+p.set_defaults(func=updateObjects)
 
 p.add_argument('meta',
     nargs='*',
@@ -107,36 +191,20 @@ p = cmds.add_parser('attach',
     parents=[dump_parser])
 p.set_defaults(func=attachFile)
 
-p.add_argument('--meta', '-m',
+p.add_argument('--file', '-f',
+    dest='filenames',
+    metavar='FILENAME',
     action='append',
-    dest='meta',
+    default=[],
+    required=True,
+    help='Can be specified multiple times to attach multiple files')
+
+p.add_argument('meta',
+    nargs='*',
     type=kvpairs,
     help='Metadata associated with the files.'
-         '  May be specified multiple times.'
          '  Should be of the format key:value')
-p.add_argument('filenames', nargs='+')
 
-
-#--------------------------------
-# add
-#--------------------------------
-def addData(args):
-    logger.msg('addData', args=args)
-    i = PPDInterface(args.database)
-    meta = getMetadata(args)
-    obj_id = i.addObjects([meta])
-    obj = i.objects.fetch(obj_id)
-    _maybeDumpObjects(i, args, [obj])
-
-p = cmds.add_parser('add',
-    help='Create an object with the given metadata values',
-    parents=[dump_parser])
-p.set_defaults(func=addData)
-p.add_argument('meta',
-    nargs='+',
-    type=kvpairs,
-    help='Metadata to be stored.'
-         '  Should be of the format key:value')
 
 
 #--------------------------------

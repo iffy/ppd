@@ -6,6 +6,7 @@ from unqlite import UnQLite
 
 import os
 import yaml
+from uuid import uuid4
 from fnmatch import fnmatch
 
 from structlog import get_logger
@@ -27,7 +28,10 @@ def mkFilterFunc(meta_glob):
 
 class PPDInterface(object):
 
-    def __init__(self, dbfile):
+    def __init__(self, dbfile=':mem:'):
+        """
+        If no dbfile is provided, an in-memory database will be used.
+        """
         self.dbfile = dbfile
     
     _db = None
@@ -47,20 +51,32 @@ class PPDInterface(object):
                 self._objects.create()
         return self._objects
 
-    _files = None
-    @property
-    def files(self):
-        if self._files is None:
-            self._files = self.db.collection('files')
-            if not self._files.exists():
-                self._files.create()
-        return self._files
 
     def addObjects(self, objects):
         """
         Add objects to the object database.
         """
         return self.objects.store(objects)
+
+    def getObject(self, object_id):
+        """
+        Get an object by its id
+        """
+        return self.objects.fetch(object_id)
+
+    def updateObjects(self, data, meta_glob=None):
+        """
+        For each matching object, merge in the given data.
+        """
+        ret = []
+        for obj in self.listObjects(meta_glob):
+            new_obj = obj.copy()
+            new_obj.update(data)
+            if new_obj != obj:
+                logger.msg('Updating', obj=new_obj)
+                self.objects.update(new_obj['__id'], new_obj)
+                ret.append(new_obj)
+        return ret
 
 
     def listObjects(self, meta_glob=None):
@@ -77,11 +93,19 @@ class PPDInterface(object):
         """
         Add a file to the store.
         """
-        self.files.store({'content': fh.read()})
+        file_id = 'file-{0}'.format(uuid4())
+        self.db[file_id] = fh.read()
         metadata = metadata.copy()
         metadata['filename'] = os.path.basename(filename)
-        metadata['_file_id'] = self.files.last_record_id()
+        metadata['_file_id'] = file_id
         return self.objects.store(metadata)
+
+
+    def getFileContents(self, file_id):
+        """
+        Get the file contents.
+        """
+        return self.db[file_id]
 
 
     def _compileLayout(self, layout):
@@ -113,14 +137,13 @@ class PPDInterface(object):
         if not os.path.exists(dirname):
             os.makedirs(dirname)
 
-        guts = self.files.fetch(obj['_file_id'])['content']
         with open(fullpath, 'wb') as fh:
             logger.msg('Writing file', fullpath=fullpath)
-            fh.write(guts)
+            fh.write(self.getFileContents(obj['_file_id']))
 
     def _mergeObjectToFile(self, basedir, dst, obj):
         """
-
+        Merge a YAML object with existing file.
         """
         fullpath = os.path.join(basedir, dst)
         dirname = os.path.dirname(fullpath)
