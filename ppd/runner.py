@@ -9,7 +9,7 @@ import yaml
 import structlog
 logger = structlog.get_logger()
 
-from ppd.util import PPDInterface
+from ppd.util import PPD, RuleBasedFileDumper
 
 def kvpairs(s):
     return [x.strip() for x in s.split(':', 1)]
@@ -17,9 +17,18 @@ def kvpairs(s):
 def getMetadata(args):
     return {k:v for k,v in args.meta}
 
-#--------------------------------
-# filtering
-#--------------------------------
+def getPPD(args):
+    dump_dir = None
+    if 'dump_dir' in args:
+        dump_dir = args.dump_dir
+    layout = None
+    rules = None
+    if 'layout' in args and args.layout:
+        with open(args.layout, 'rb') as fh:
+            layout = yaml.safe_load(fh)
+            rules = layout['rules']
+    return PPD(args.database, RuleBasedFileDumper(dump_dir, rules))
+
 
 def getFilter(args):
     return {k:v for k,v in args.filter}
@@ -31,17 +40,6 @@ filter_parser.add_argument('--filter', '-f',
     type=kvpairs,
     help='Metadata to filter by.'
          '  Should be of the format key:glob_pattern')
-
-
-#--------------------------------
-# dumping
-#--------------------------------
-def _maybeDumpObjects(ppdi, args, objects):
-    # XXX this should be rolled into PPDInterface and tested.
-    if args.layout and args.dump_dir:
-        layout = yaml.safe_load(open(args.layout, 'rb'))
-        for obj in objects:
-            ppdi.dumpObjectToFiles(args.dump_dir, layout, obj)
 
 dump_parser = argparse.ArgumentParser(add_help=False)
 dump_parser.add_argument('--dump-dir', '-D',
@@ -73,11 +71,11 @@ cmds = ap.add_subparsers(dest='command', help='command help')
 # import / read
 #--------------------------------
 def read(args):
-    i = PPDInterface(args.database)
+    ppd = getPPD(args)
     data = yaml.safe_load(sys.stdin)
     if isinstance(data, dict):
         data = [data]
-    i.addObjects(data)
+    ppd.addObject(data)
 
 p = cmds.add_parser('import',
     help='Import YAML objects from stdin',
@@ -89,9 +87,9 @@ p.set_defaults(func=read)
 # list
 #--------------------------------
 def listObjects(args):
-    i = PPDInterface(args.database)
+    ppd = getPPD(args)
     meta_glob = getFilter(args)
-    objects = i.listObjects(meta_glob)
+    objects = ppd.listObjects(meta_glob)
     if args.id:
         for obj in objects:
             sys.stdout.write(str(obj['__id'])+'\n')
@@ -114,11 +112,9 @@ p.add_argument('--id', '-i',
 #--------------------------------
 def addObject(args):
     logger.msg('addObject', args=args)
-    i = PPDInterface(args.database)
+    ppd = getPPD(args)
     meta = getMetadata(args)
-    obj_id = i.addObjects([meta])
-    obj = i.objects.fetch(obj_id)
-    _maybeDumpObjects(i, args, [obj])
+    ppd.addObject(meta)
 
 p = cmds.add_parser('add',
     help='Create an object with the given metadata values',
@@ -135,10 +131,10 @@ p.add_argument('meta',
 #--------------------------------
 def getObject(args):
     logger.msg('get', args=args)
-    i = PPDInterface(args.database)
+    ppd = getPPD(args)
     ret = []
     for object_id in args.object_ids:
-        ret.append(i.getObject(object_id))
+        ret.append(ppd.getObject(object_id))
     sys.stdout.write(yaml.safe_dump(ret, default_flow_style=False))
 
 p = cmds.add_parser('get',
@@ -156,9 +152,8 @@ def updateObjects(args):
     logger.msg('update', args=args)
     meta_glob = getFilter(args)
     data = getMetadata(args)
-    i = PPDInterface(args.database)
-    objects = i.updateObjects(data, meta_glob)
-    _maybeDumpObjects(i, args, objects)
+    ppd = getPPD(args)
+    ppd.updateObjects(data, meta_glob)
 
 p = cmds.add_parser('update',
     help='Update objects',
@@ -176,14 +171,11 @@ p.add_argument('meta',
 # attach
 #--------------------------------
 def attachFile(args):
-    i = PPDInterface(args.database)
+    ppd = getPPD(args)
     meta = getMetadata(args)
     for filename in args.filenames:
         with open(filename, 'rb') as fh:
-            obj_id = i.addFile(fh, filename, meta)
-            obj = i.objects.fetch(obj_id)
-            logger.msg('Attached', filename=filename, meta=meta)
-            _maybeDumpObjects(i, args, [obj])
+            ppd.addFile(fh, filename, meta)
 
 
 p = cmds.add_parser('attach',
@@ -212,8 +204,7 @@ p.add_argument('meta',
 #--------------------------------
 def dumpData(args):
     logger.msg('dump', args=args)
-    i = PPDInterface(args.database)
-    _maybeDumpObjects(i, args, i.listObjects())
+    ppd = getPPD(args)
 
 p = cmds.add_parser('dump',
     help='Dump data to the filesystem',

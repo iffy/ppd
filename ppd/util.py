@@ -42,11 +42,14 @@ def hashFile(fh, chunk_size=1024):
 
 class PPD(object):
 
-    def __init__(self, dbfile=':mem:'):
+    def __init__(self, dbfile=':mem:', dumper=None):
         """
         If no dbfile is provided, an in-memory database will be used.
         """
         self.dbfile = dbfile
+        self.dumper = dumper
+        if dumper:
+            dumper.ppd = self
     
     _db = None
     @property
