@@ -200,9 +200,15 @@ p.add_argument('object_ids',
 def attachFile(args):
     ppd = getPPD(args)
     meta = getMetadata(args)
-    for filename in args.filenames:
-        with open(filename, 'rb') as fh:
-            ppd.addFile(fh, filename, meta)
+    if args.filenames:
+        # read files from filesystem
+        for filename in args.filenames:
+            with open(filename, 'rb') as fh:
+                ppd.addFile(fh, filename, meta)
+    else:
+        # stdin
+        print 'stdin?'
+        ppd.addFile(args.stdin, None, meta)
     ppd.close()
 
 
@@ -216,14 +222,19 @@ p.add_argument('--file', '-f',
     metavar='FILENAME',
     action='append',
     default=[],
-    required=True,
-    help='Can be specified multiple times to attach multiple files')
+    help="Can be specified multiple times to attach multiple files."
+         " If no filenames are given, then a single file's contents"
+         " will be read from stdin.  In this case, you must set the"
+         " filename with METADATA (i.e. 'filename:bob.txt')")
 
 p.add_argument('meta',
     nargs='*',
+    metavar="METADATA",
     type=kvpairs,
     help='Metadata associated with the files.'
-         '  Should be of the format key:value')
+         '  Should be of the format key:value.'
+         '  If no --file/-f is provided, contents will be read from stdin'
+         '  and you must set filename here (i.e. "filename:bob.txt")')
 
 
 #--------------------------------

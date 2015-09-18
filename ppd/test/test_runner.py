@@ -75,4 +75,9 @@ class runTest(TestCase):
         self.assertEqual(stdout.count('foo'), 0,
             "Should have deleted the foo:bar object")
 
+        # attach from stdin
+        self.runWithDatabase(['attach', 'filename:bob.txt'], stdin='the content\x22')
+        stdout, _ = self.runWithDatabase(['cat', '-f', 'filename:bob.txt'])
+        self.assertEqual(stdout, 'the content\x22')
+
 

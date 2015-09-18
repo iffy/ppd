@@ -160,6 +160,9 @@ class PPD(object):
         file_id = 'file-{0}'.format(uuid4())
         self.db[file_id] = fh.read()
         metadata = metadata.copy()
+        filename = filename or metadata.get('filename', None)
+        if not filename:
+            raise ValueError('No filename provided')
         metadata['filename'] = os.path.basename(filename)
         metadata['_file_id'] = file_id
         metadata['_file_hash'] = hashFile(fh)
