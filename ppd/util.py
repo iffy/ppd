@@ -10,6 +10,8 @@ from fnmatch import fnmatch
 from functools import partial, wraps
 from hashlib import sha1
 
+from StringIO import StringIO
+
 from structlog import get_logger
 logger = get_logger()
 
@@ -165,7 +167,7 @@ class PPD(object):
             raise ValueError('No filename provided')
         metadata['filename'] = os.path.basename(filename)
         metadata['_file_id'] = file_id
-        metadata['_file_hash'] = hashFile(fh)
+        metadata['_file_hash'] = hashFile(StringIO(self.db[file_id]))
         return self.objects.store(metadata)
 
 
