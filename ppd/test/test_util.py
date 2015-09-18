@@ -161,6 +161,27 @@ class PPDTest(TestCase):
             "Should return the contents provided when attaching the file")
 
 
+    def test_addFile_filenameFromMetadata(self):
+        """
+        You can provide the filename in the metadata to override the
+        default filename.
+        """
+        i = PPD()
+        fh = StringIO('\x00\x01Hey\xff')
+        obj_id = i.addFile(fh, None, {'filename': 'something.exe'})
+        obj = i.getObject(obj_id)
+        self.assertEqual(obj['filename'], 'something.exe')
+
+
+    def test_addFile_filenameRequired(self):
+        """
+        filename must either be specified as an arg or in the metadata.
+        """
+        i = PPD()
+        fh = StringIO('\x00\x01Hey\xff')
+        self.assertRaises(ValueError, i.addFile, fh, None, {})
+
+
     def test_deleteFile(self):
         """
         When you delete a file's metadata, the content is also deleted.

@@ -53,6 +53,10 @@ Print out the file:
 
     ppd cat -f name:bob
 
+Read a file from stdin:
+
+    echo 'some fake file' | ppd attach filename:john.txt
+
 # Dumping #
 
 `ppd` lets you dump the data out to your filesystem according to rules.  Here's a sample rule file (named `layout.yml`):
@@ -78,6 +82,8 @@ Which will produce the following:
     /tmp/dump
     /tmp/dump/192.168.12.14
     /tmp/dump/192.168.12.14/info.yml
+    /tmp/dump/john.txt
+    /tmp/dump/john.txt.yml
     /tmp/dump/somefile.txt
     /tmp/dump/somefile.txt.yml
 
