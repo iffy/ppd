@@ -27,7 +27,12 @@ def getPPD(args):
         with open(args.layout, 'rb') as fh:
             layout = yaml.safe_load(fh)
             rules = layout['rules']
-    return PPD(args.database, RuleBasedFileDumper(dump_dir, rules))
+    auto_dump = all([dump_dir, rules])
+    def reporter(x):
+        args.stdout.write(x + '\n')
+    return PPD(args.database,
+        dumper=RuleBasedFileDumper(dump_dir, rules, reporter=reporter),
+        auto_dump=auto_dump)
 
 
 def getFilter(args):
@@ -64,6 +69,7 @@ ap.add_argument('--database', '-d',
     help='Database file to use.'
          '  Can be specified with PPD_DATABASE env var.'
          ' (current default: %(default)s)')
+ap.set_defaults(stdout=sys.stdout, stderr=sys.stderr, stdin=sys.stdin)
 
 cmds = ap.add_subparsers(dest='command', help='command help')
 
@@ -72,10 +78,11 @@ cmds = ap.add_subparsers(dest='command', help='command help')
 #--------------------------------
 def read(args):
     ppd = getPPD(args)
-    data = yaml.safe_load(sys.stdin)
+    data = yaml.safe_load(args.stdin)
     if isinstance(data, dict):
         data = [data]
     ppd.addObject(data)
+    ppd.close()
 
 p = cmds.add_parser('import',
     help='Import YAML objects from stdin',
@@ -92,9 +99,10 @@ def listObjects(args):
     objects = ppd.listObjects(meta_glob)
     if args.id:
         for obj in objects:
-            sys.stdout.write(str(obj['__id'])+'\n')
+            args.stdout.write(str(obj['__id'])+'\n')
     else:
-        sys.stdout.write(yaml.safe_dump(objects, default_flow_style=False))
+        args.stdout.write(yaml.safe_dump(objects, default_flow_style=False))
+    ppd.close()
 
 p = cmds.add_parser('list',
     help='List objects matching certain criteria.',
@@ -111,10 +119,10 @@ p.add_argument('--id', '-i',
 # add
 #--------------------------------
 def addObject(args):
-    logger.msg('addObject', args=args)
     ppd = getPPD(args)
     meta = getMetadata(args)
     ppd.addObject(meta)
+    ppd.close()
 
 p = cmds.add_parser('add',
     help='Create an object with the given metadata values',
@@ -130,12 +138,13 @@ p.add_argument('meta',
 # get
 #--------------------------------
 def getObject(args):
-    logger.msg('get', args=args)
     ppd = getPPD(args)
     ret = []
     for object_id in args.object_ids:
         ret.append(ppd.getObject(object_id))
-    sys.stdout.write(yaml.safe_dump(ret, default_flow_style=False))
+    args.stdout.write(yaml.safe_dump(ret, default_flow_style=False))
+    ppd.close()
+
 
 p = cmds.add_parser('get',
     help='Get a objects by ids')
@@ -149,11 +158,11 @@ p.add_argument('object_ids',
 # update
 #--------------------------------
 def updateObjects(args):
-    logger.msg('update', args=args)
     meta_glob = getFilter(args)
     data = getMetadata(args)
     ppd = getPPD(args)
     ppd.updateObjects(data, meta_glob)
+    ppd.close()
 
 p = cmds.add_parser('update',
     help='Update objects',
@@ -176,6 +185,7 @@ def attachFile(args):
     for filename in args.filenames:
         with open(filename, 'rb') as fh:
             ppd.addFile(fh, filename, meta)
+    ppd.close()
 
 
 p = cmds.add_parser('attach',
@@ -203,22 +213,30 @@ p.add_argument('meta',
 # dump
 #--------------------------------
 def dumpData(args):
-    logger.msg('dump', args=args)
     ppd = getPPD(args)
+    meta_glob = getFilter(args)
+    ppd.dump(meta_glob)
+    ppd.close()
 
 p = cmds.add_parser('dump',
     help='Dump data to the filesystem',
-    parents=[dump_parser])
+    parents=[dump_parser, filter_parser])
 p.set_defaults(func=dumpData)
 
 
 
-def run():
-    args = ap.parse_args()
+def run(cmd_strings=None, stdout=sys.stdout, stderr=sys.stderr, stdin=sys.stdin):
+    # fake out stdout/stderr
+
+    args = ap.parse_args(cmd_strings)
+    args.stdout = stdout
+    args.stderr = stderr
+    args.stdin = stdin
 
     if args.verbose:
-        structlog.configure(logger_factory=structlog.PrintLoggerFactory(sys.stderr))
+        structlog.configure(logger_factory=structlog.PrintLoggerFactory(args.stderr))
     else:
         structlog.configure(logger_factory=structlog.ReturnLoggerFactory())
 
+    logger.msg(args=args)
     args.func(args)

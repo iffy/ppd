@@ -7,7 +7,7 @@ import os
 import yaml
 from uuid import uuid4
 from fnmatch import fnmatch
-from functools import partial
+from functools import partial, wraps
 from hashlib import sha1
 
 from structlog import get_logger
@@ -42,14 +42,31 @@ def hashFile(fh, chunk_size=1024):
 
 class PPD(object):
 
-    def __init__(self, dbfile=':mem:', dumper=None):
+    def __init__(self, dbfile=':mem:', dumper=None, auto_dump=False):
         """
         If no dbfile is provided, an in-memory database will be used.
         """
         self.dbfile = dbfile
         self.dumper = dumper
+        self.auto_dump = auto_dump
         if dumper:
             dumper.ppd = self
+
+    def autoDump(f):
+        @wraps(f)
+        def deco(self, *args, **kwargs):
+            ret = f(self, *args, **kwargs)
+            if self.auto_dump:
+                objects = ret
+                if not isinstance(ret, (tuple, list)):
+                    objects = [ret]
+                for obj in objects:
+                    if isinstance(obj, int):
+                        # it's an object id
+                        obj = self.objects.fetch(obj)
+                    self.dumper.dumpObject(obj)
+            return ret
+        return deco
     
     _db = None
     @property
@@ -69,6 +86,20 @@ class PPD(object):
         return self._objects
 
 
+    def commit(self):
+        self.db.commit()
+
+
+    def close(self):
+        self.db.close()
+
+
+    def dump(self, filter_glob=None):
+        for obj in self.listObjects(filter_glob=filter_glob):
+            self.dumper.dumpObject(obj)
+
+
+    @autoDump
     def addObject(self, obj):
         """
         Add an object to the obj database.
@@ -81,6 +112,7 @@ class PPD(object):
         """
         return self.objects.fetch(object_id)
 
+    @autoDump
     def updateObjects(self, data, filter_glob=None):
         """
         For each matching object, merge in the given data.
@@ -90,8 +122,8 @@ class PPD(object):
             new_obj = obj.copy()
             new_obj.update(data)
             if new_obj != obj:
-                logger.msg('Updating', obj=new_obj)
                 self.objects.update(new_obj['__id'], new_obj)
+                logger.msg('updated', obj_id=new_obj['__id'])
             ret.append(new_obj)
         return ret
 
@@ -111,7 +143,7 @@ class PPD(object):
         else:
             return func()
 
-
+    @autoDump
     def addFile(self, fh, filename, metadata):
         """
         Add a file to the store.

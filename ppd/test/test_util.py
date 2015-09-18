@@ -121,7 +121,7 @@ class PPDTest(TestCase):
         """
         i = PPD()
         id1 = i.addObject({'foo': 'bar'})
-        id2 = i.addObject({'hey': 'ho'})
+        i.addObject({'hey': 'ho'})
 
         objects = i.updateObjects({'foo': 'bar'}, {'foo': '*'})
         self.assertEqual(len(objects), 1,
@@ -430,19 +430,55 @@ class RuleBasedFileDumper_dumpObjectTest(TestCase):
 
 class PPD_autoDumpTest(TestCase):
 
+
+    def setUp(self):
+        self.tmpdir = FilePath(self.mktemp())
+        rules = [
+            {
+                'pattern': {
+                    'foo': '*',
+                },
+                'actions': [
+                    {'merge_yaml': '{foo}.yml'},
+                ],
+            },
+            {
+                'pattern': {
+                    '_file_id': '*',
+                },
+                'actions': [
+                    {'write_file': '{filename}'},
+                ]
+            }
+        ]
+        self.reported = []
+        self.ppd = PPD(':mem:',
+            RuleBasedFileDumper(self.tmpdir.path,
+                                rules=rules,
+                                reporter=self.reported.append),
+            auto_dump=True)
+
     
     def test_addObject(self):
         """
         If you add an object, and auto-dumping is enabled, it should dump.
         """
-        self.fail('write me')
+        self.ppd.addObject({'foo': 'hey'})
+        self.assertTrue(self.tmpdir.child('hey.yml').exists(),
+            "Should have run the rules")
+        self.assertEqual(len(self.reported), 1,
+            "Should have reported a change")
 
 
     def test_addFile(self):
         """
         If you add a file, and auto-dumping is enabled, it should dump.
         """
-        self.fail('write me')
+        self.ppd.addFile(StringIO('foo bar'), 'guys.txt', {'x': 'x'})
+        self.assertTrue(self.tmpdir.child('guys.txt').exists(),
+            "Should have run the rules to create the file")
+        self.assertEqual(len(self.reported), 1,
+            "Should have reported the change")
 
 
     def test_updateObjects(self):
@@ -450,11 +486,12 @@ class PPD_autoDumpTest(TestCase):
         If you update some objects, and auto-dumping is enabled,
         it should dump.
         """
-        self.fail('write me')
+        self.ppd.addObject({'foo': 'hey'})
+        self.reported.pop()
+        self.ppd.updateObjects({'foo': 'woo'})
 
+        self.assertTrue(self.tmpdir.child('woo.yml').exists(),
+            "Should have run the rules")
+        self.assertEqual(len(self.reported), 1,
+            "Should have reported a change")
 
-    def test_addObject(self):
-        """
-        If you add an object, and auto-dumping is enabled, it should dump.
-        """
-        self.fail('write me')
