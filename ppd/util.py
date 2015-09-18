@@ -8,6 +8,7 @@ import yaml
 from uuid import uuid4
 from fnmatch import fnmatch
 from functools import partial
+from hashlib import sha1
 
 from structlog import get_logger
 logger = get_logger()
@@ -24,6 +25,19 @@ def mkFilterFunc(filter_glob):
                 return False
         return True
     return filterfunc
+
+
+def hashFile(fh, chunk_size=1024):
+    original_seek = fh.tell()
+    fh.seek(0)
+    h = sha1()
+    while True:
+        chunk = fh.read(chunk_size)
+        if not chunk:
+            break
+        h.update(chunk)
+    fh.seek(original_seek)
+    return h.hexdigest()
 
 
 class PPD(object):
@@ -104,6 +118,7 @@ class PPD(object):
         metadata = metadata.copy()
         metadata['filename'] = os.path.basename(filename)
         metadata['_file_id'] = file_id
+        metadata['_file_hash'] = hashFile(fh)
         return self.objects.store(metadata)
 
 
@@ -114,66 +129,39 @@ class PPD(object):
         return self.db[file_id]
 
 
-    def _compileLayout(self, layout):
-        if 'compiled' not in layout:
-            for rule in layout['rules']:
-                rule['fn'] = mkFilterFunc(rule['pattern'])
-                if not isinstance(rule['dst'], (list, tuple)):
-                    rule['dst'] = [rule['dst']]
-            layout['compiled'] = True
-        return layout
-
-    def dumpObjectToFiles(self, basedir, layout, obj):
-        self._compileLayout(layout)
-        file_id = obj.get('_file_id', None)
-        for rule in layout['rules']:
-            if rule['fn'](obj):
-                for dst in rule['dst']:
-                    formatted_dst = dst['path'].format(**obj)
-                    if file_id is not None:
-                        self._writeRawFile(basedir, formatted_dst, obj)
-                    else:
-                        self._mergeObjectToFile(basedir, formatted_dst, obj)
-                break
-
-    def _writeRawFile(self, basedir, dst, obj):
-        logger.msg('_writeRawFile')
-        fullpath = os.path.join(basedir, dst)
-        dirname = os.path.dirname(fullpath)
-        if not os.path.exists(dirname):
-            os.makedirs(dirname)
-
-        with open(fullpath, 'wb') as fh:
-            logger.msg('Writing file', fullpath=fullpath)
-            fh.write(self.getFileContents(obj['_file_id']))
-
-    def _mergeObjectToFile(self, basedir, dst, obj):
-        """
-        Merge a YAML object with existing file.
-        """
-        fullpath = os.path.join(basedir, dst)
-        dirname = os.path.dirname(fullpath)
-        if not os.path.exists(dirname):
-            os.makedirs(dirname)
-        existing = {}
-        towrite = obj
-        if os.path.exists(fullpath):
-            existing = yaml.safe_load(open(fullpath, 'rb'))
-            towrite = existing
-            towrite.update(obj)
-        if existing != towrite:
-            with open(fullpath, 'wb') as fh:
-                logger.msg('Writing', filename=fullpath)
-                fh.write(yaml.safe_dump(existing,
-                    default_flow_style=False))
-
 
 class RuleBasedFileDumper(object):
 
     
-    def __init__(self, root, reporter=None):
+    def __init__(self, root, rules=None, ppd=None, reporter=None):
         self.root = root
+        self.ppd = ppd
+        self._rules = rules
         self.reporter = reporter or (lambda x:None)
+
+
+    _compiled_rules = None
+    @property
+    def rules(self):
+        if self._compiled_rules is None:
+            self._compiled_rules = []
+            for rule in self._rules:
+                if rule['pattern'] == 'all':
+                    rule['$match_fn'] = lambda x:True
+                else:
+                    rule['$match_fn'] = mkFilterFunc(rule['pattern'])
+                self._compiled_rules.append(rule)
+        return self._compiled_rules
+
+
+    def dumpObject(self, obj):
+        """
+        Dump this object according to the rules.
+        """
+        for rule in self.rules:
+            if rule['$match_fn'](obj):
+                for action in rule['actions']:
+                    self.performAction(action, obj)
 
 
     def performAction(self, action, obj):
@@ -182,6 +170,8 @@ class RuleBasedFileDumper(object):
         """
         if 'merge_yaml' in action:
             self._perform_merge_yaml(action, obj)
+        if 'write_file' in action:
+            self._perform_write_file(action, obj)
 
 
     def _perform_merge_yaml(self, action, obj):
@@ -210,4 +200,23 @@ class RuleBasedFileDumper(object):
                 self.reporter('wrote {0}'.format(filename))
 
 
+    def _perform_write_file(self, action, obj):
+        """
+        Write a file's contents to disk.
+        """
+        filename = action['write_file'].format(**obj)
+        fullpath = os.path.join(self.root, filename)
+        dirname = os.path.dirname(fullpath)
+        if not os.path.exists(dirname):
+            os.makedirs(dirname)
+
+        existing_hash = 'not a real hash sentinal'
+        if os.path.exists(fullpath):
+            with open(fullpath, 'rb') as fh:
+                existing_hash = hashFile(fh)
+
+        if existing_hash != obj['_file_hash']:
+            with open(fullpath, 'wb') as fh:
+                fh.write(self.ppd.getFileContents(obj['_file_id']))
+                self.reporter('wrote {0}'.format(filename))
 

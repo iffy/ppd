@@ -142,12 +142,13 @@ class PPDTest(TestCase):
         obj = i.getObject(obj_id)
         self.assertEqual(obj['filename'], 'something.exe')
         self.assertEqual(obj['hey'], 'ho')
+        self.assertIn('_file_hash', obj, "Should include hash of file")
         contents = i.getFileContents(obj['_file_id'])
         self.assertEqual(contents, '\x00\x01Hey\xff',
             "Should return the contents provided when attaching the file")
 
 
-class RuleBasedFileDumperTest(TestCase):
+class RuleBasedFileDumper_performActionTest(TestCase):
 
 
     def test_merge_yaml_firstTime(self):
@@ -261,7 +262,7 @@ class RuleBasedFileDumperTest(TestCase):
         }, obj)
 
         exp = tmpdir.child('foo').child('bar').child('joe.txt')
-        self.assertTrue(exp.exists())
+        self.assertTrue(exp.exists(), "Should make the file")
         self.assertEqual(exp.getContent(), 'foo bar')
 
         self.assertEqual(len(reported), 1,
@@ -320,9 +321,140 @@ class RuleBasedFileDumperTest(TestCase):
         self.assertEqual(exp.getContent(), 'baz who')
         self.assertEqual(len(reported), 1,
             "Should have reported the write because something changed")
-        
+
+
+class RuleBasedFileDumper_dumpObjectTest(TestCase):
+
+
+    def test_firstMatch(self):
+        """
+        Should act on the first match only.
+        """
+        tmpdir = FilePath(self.mktemp())
+        rules = [
+            {
+                'pattern': {
+                    'foo': '*',
+                },
+                'actions': [
+                    {'merge_yaml': '{foo}.yml'},
+                ]
+            },
+            {
+                'pattern': {
+                    'bar': '*',
+                },
+                'actions': [
+                    {'merge_yaml': '{bar}.yml'},
+                ]
+            }
+        ]
+        dumper = RuleBasedFileDumper(tmpdir.path, rules)
+        dumper.dumpObject({
+            'foo': 'thefoo',
+        })
+        self.assertTrue(tmpdir.child('thefoo.yml').exists(),
+            "Should have matched and acted on the first rule")
+        dumper.dumpObject({
+            'bar': 'hey',
+        })
+        self.assertTrue(tmpdir.child('hey.yml').exists(),
+            "Should have matched and acted on the second rule")
+        self.assertEqual(len(tmpdir.children()), 2, "Should only have made "
+            "the 2 expected files")
+
+
+    def test_catchAll(self):
+        """
+        Everything should match a catchall rule.
+        """
+        tmpdir = FilePath(self.mktemp())
+        rules = [
+            {
+                'pattern': {
+                    'foo': '*',
+                },
+                'actions': [
+                    {'merge_yaml': '{foo}.yml'},
+                ]
+            },
+            {
+                'pattern': 'all',
+                'actions': [
+                    {'merge_yaml': 'extra.yml'},
+                ]
+            }
+        ]
+        dumper = RuleBasedFileDumper(tmpdir.path, rules)
+        dumper.dumpObject({
+            'foo': 'thefoo',
+        })
+        self.assertTrue(tmpdir.child('thefoo.yml').exists(),
+            "Should have matched and acted on the first rule")
+        dumper.dumpObject({
+            'bar': 'hey',
+        })
+        self.assertTrue(tmpdir.child('extra.yml').exists(),
+            "Should have matched and acted on the second rule")
+        self.assertEqual(len(tmpdir.children()), 2, "Should only have made "
+            "the 2 expected files")
+
+
+    def test_multipleActions(self):
+        """
+        Multiple actions can be specified for each rule.  Each action should
+        happen.
+        """
+        tmpdir = FilePath(self.mktemp())
+        rules = [
+            {
+                'pattern': {
+                    'foo': '*',
+                },
+                'actions': [
+                    {'merge_yaml': '{foo}.yml'},
+                    {'merge_yaml': '{foo}2.yml'},
+                ]
+            },
+        ]
+        dumper = RuleBasedFileDumper(tmpdir.path, rules)
+        dumper.dumpObject({
+            'foo': 'thefoo',
+        })
+        self.assertTrue(tmpdir.child('thefoo.yml').exists(),
+            "Should have matched and acted on the first rule first action")
+        self.assertTrue(tmpdir.child('thefoo2.yml').exists(),
+            "Should have matched and acted on the first rule second action")
+
 
 
 class PPD_autoDumpTest(TestCase):
 
-    pass
+    
+    def test_addObject(self):
+        """
+        If you add an object, and auto-dumping is enabled, it should dump.
+        """
+        self.fail('write me')
+
+
+    def test_addFile(self):
+        """
+        If you add a file, and auto-dumping is enabled, it should dump.
+        """
+        self.fail('write me')
+
+
+    def test_updateObjects(self):
+        """
+        If you update some objects, and auto-dumping is enabled,
+        it should dump.
+        """
+        self.fail('write me')
+
+
+    def test_addObject(self):
+        """
+        If you add an object, and auto-dumping is enabled, it should dump.
+        """
+        self.fail('write me')
