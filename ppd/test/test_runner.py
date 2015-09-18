@@ -43,6 +43,12 @@ class runTest(TestCase):
         tmpfile.setContent('hey guys\x00')
         self.runWithDatabase(['attach', '-f', tmpfile.path])
 
+        # cat
+        stdout, _ = self.runWithDatabase(['list', '--id', '-f', '_file_id:*'])
+        stdout, _ = self.runWithDatabase(['cat', stdout.strip()])
+        self.assertEqual(stdout, 'hey guys\x00',
+            "Should cat the file out")
+
         # update
         self.runWithDatabase(['update', 'who:haw'])
         stdout, _ = self.runWithDatabase(['list'])

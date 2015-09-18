@@ -147,7 +147,7 @@ def getObject(args):
 
 
 p = cmds.add_parser('get',
-    help='Get a objects by ids')
+    help='Get objects by their ids')
 p.set_defaults(func=getObject)
 p.add_argument('object_ids',
     type=int,
@@ -207,6 +207,27 @@ p.add_argument('meta',
     help='Metadata associated with the files.'
          '  Should be of the format key:value')
 
+
+#--------------------------------
+# cat
+#--------------------------------
+def catFile(args):
+    ppd = getPPD(args)
+    for object_id in args.object_ids:
+        obj = ppd.getObject(object_id)
+        args.stdout.write(ppd.getFileContents(obj['_file_id']))
+    ppd.close()
+
+p = cmds.add_parser('cat',
+    help='Print out the contents of a file',
+    parents=[])
+p.set_defaults(func=catFile)
+
+p.add_argument('object_ids',
+    type=int,
+    nargs='+',
+    help='ID of files to get.  Note, this is the id of the file object,'
+         ' NOT the _file_id within the file object')
 
 
 #--------------------------------
