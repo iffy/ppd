@@ -15,7 +15,7 @@ def kvpairs(s):
     return [x.strip() for x in s.split(':', 1)]
 
 def getMetadata(args):
-    return {k:v for k,v in args.meta}
+    return dict(args.meta)
 
 def getPPD(args):
     dump_dir = None
@@ -36,7 +36,7 @@ def getPPD(args):
 
 
 def getFilter(args):
-    return {k:v for k,v in args.filter}
+    return dict(args.filter)
 
 filter_parser = argparse.ArgumentParser(add_help=False)
 filter_parser.add_argument('--filter', '-f',
