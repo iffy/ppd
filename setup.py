@@ -19,6 +19,7 @@ setup(
         'structlog',
         'unqlite',
         'PyYaml',
+        'ordereddict',
     ],
     scripts=[
         'scripts/ppd',
