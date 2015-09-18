@@ -140,9 +140,6 @@ class FileSystem(LoggingMixIn, Operations):
 
     def setxattr(self, path, name, value, options, position=0):
         print 'setxattr', path, name, value, options, position
-        # Ignore options
-        attrs = self.files[path].setdefault('attrs', {})
-        attrs[name] = value
 
     def statfs(self, path):
         print 'statfs', path
