@@ -1,0 +1,29 @@
+sudo: false
+language: python
+python: 2.7
+
+cache:
+  directories:
+    - $HOME/.cache/pip
+
+env:
+  - TOX_ENV=py26
+  - TOX_ENV=py27
+  - TOX_ENV=pyflakes
+
+
+install:
+  - pip install tox codecov
+
+script:
+  - tox -e $TOX_ENV
+
+after_success:
+  - codecov
+
+notifications:
+  email: true
+
+branches:
+  only:
+    - master
