@@ -207,7 +207,6 @@ def attachFile(args):
                 ppd.addFile(fh, filename, meta)
     else:
         # stdin
-        print 'stdin?'
         ppd.addFile(args.stdin, None, meta)
     ppd.close()
 
