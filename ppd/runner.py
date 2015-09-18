@@ -175,6 +175,24 @@ p.add_argument('meta',
     help='Metadata to filter by.'
          '  Should be of the format key:glob_pattern')
 
+#--------------------------------
+# rm
+#--------------------------------
+def deleteObjects(args):
+    ppd = getPPD(args)
+    for object_id in args.object_ids:
+        ppd.deleteObject(object_id)
+    ppd.close()
+
+p = cmds.add_parser('rm',
+    help='Delete objects',
+    parents=[])
+p.set_defaults(func=deleteObjects)
+
+p.add_argument('object_ids',
+    type=int,
+    nargs='+',
+    help='ID of objects to delete.')
 
 #--------------------------------
 # attach

@@ -112,6 +112,15 @@ class PPD(object):
         """
         return self.objects.fetch(object_id)
 
+    def deleteObject(self, object_id):
+        """
+        Delete an object by id.
+        """
+        obj = self.getObject(object_id)
+        if '_file_id' in obj:
+            self.db.delete(obj['_file_id'])
+        self.objects.delete(object_id)
+
     @autoDump
     def updateObjects(self, data, filter_glob=None):
         """
