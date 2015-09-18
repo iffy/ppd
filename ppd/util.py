@@ -241,7 +241,7 @@ class RuleBasedFileDumper(object):
         if new_val != current_val:
             with open(fullpath, 'wb') as fh:
                 fh.write(yaml.safe_dump(new_val, default_flow_style=False))
-                self.reporter('wrote {0}'.format(filename))
+                self.reporter('wrote {0}'.format(fullpath))
 
 
     def _perform_write_file(self, action, obj):
@@ -262,5 +262,5 @@ class RuleBasedFileDumper(object):
         if existing_hash != obj['_file_hash']:
             with open(fullpath, 'wb') as fh:
                 fh.write(self.ppd.getFileContents(obj['_file_id']))
-                self.reporter('wrote {0}'.format(filename))
+                self.reporter('wrote {0}'.format(fullpath))
 
