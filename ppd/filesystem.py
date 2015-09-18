@@ -6,8 +6,6 @@ from time import time
 
 
 import sys
-print sys.executable
-print '\n'.join(sys.path)
 
 from fuse import FUSE, LoggingMixIn, Operations, FuseOSError
 
@@ -99,23 +97,14 @@ class FileSystem(LoggingMixIn, Operations):
         return self.data[path][offset:offset + size]
 
     def readdir(self, path, fh):
-        print 'readdir', path, fh
-        
-        pattern, last_key = self._patternFromPath(path)
-
-        print 'last_key', last_key
-        print 'pattern', pattern
-        objects = self._ppd.listObjects(pattern)
-        keys = set()
+        items = set()
+        objects = self._ppd.listObjects()
         for obj in objects:
-            if last_key:
-                keys.add(obj[last_key])
-            else:
-                keys.update([x for x in obj.keys() if not x.startswith('_')])
-        keys = keys - set(pattern)
-        print 'keys', keys
+            for k,v in obj.items():
+                if not k.startswith('_'):
+                    items.add(str(v))
 
-        return ['.', '..'] + sorted(keys)
+        return ['.', '..'] + sorted(items)
 
     def readlink(self, path):
         print 'readlink', path
