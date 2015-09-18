@@ -276,6 +276,22 @@ p = cmds.add_parser('dump',
 p.set_defaults(func=dumpData)
 
 
+#---------------------------------
+# filesystem
+#---------------------------------
+def runFilesystem(args):
+    from ppd.filesystem import FileSystem
+    from fuse import FUSE
+    ppd = getPPD(args)
+    FUSE(FileSystem(ppd), args.mountpoint, foreground=True)
+
+p = cmds.add_parser('fs',
+    help='Start a virtual filesystem for file-like access')
+p.set_defaults(func=runFilesystem)
+
+p.add_argument('mountpoint',
+    help='Place to mount files')
+
 
 def run(cmd_strings=None, stdout=sys.stdout, stderr=sys.stderr, stdin=sys.stdin):
     # fake out stdout/stderr
