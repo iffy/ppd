@@ -213,6 +213,9 @@ p.add_argument('meta',
 #--------------------------------
 def catFile(args):
     ppd = getPPD(args)
+    meta_glob = getFilter(args)
+    for obj in ppd.listObjects(meta_glob):
+        args.stdout.write(ppd.getFileContents(obj['_file_id']))
     for object_id in args.object_ids:
         obj = ppd.getObject(object_id)
         args.stdout.write(ppd.getFileContents(obj['_file_id']))
@@ -220,12 +223,12 @@ def catFile(args):
 
 p = cmds.add_parser('cat',
     help='Print out the contents of a file',
-    parents=[])
+    parents=[filter_parser])
 p.set_defaults(func=catFile)
 
 p.add_argument('object_ids',
     type=int,
-    nargs='+',
+    nargs='*',
     help='ID of files to get.  Note, this is the id of the file object,'
          ' NOT the _file_id within the file object')
 
