@@ -44,8 +44,7 @@ class runTest(TestCase):
         self.runWithDatabase(['attach', '-f', tmpfile.path])
 
         # cat
-        stdout, _ = self.runWithDatabase(['list', '--id', '-f', '_file_id:*'])
-        stdout, _ = self.runWithDatabase(['cat', stdout.strip()])
+        stdout, _ = self.runWithDatabase(['cat', '-f', '_file_id:*'])
         self.assertEqual(stdout, 'hey guys\x00',
             "Should cat the file out")
 
@@ -69,5 +68,11 @@ class runTest(TestCase):
         self.assertNotEqual(stdout, '', "Should have some output")
         self.assertTrue(dmpdir.child('bar.yml').exists(),
             "Should have dumped")
+
+        # rm
+        self.runWithDatabase(['rm', '0'])
+        stdout, _ = self.runWithDatabase(['list'])
+        self.assertEqual(stdout.count('foo'), 0,
+            "Should have deleted the foo:bar object")
 
 

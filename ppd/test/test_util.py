@@ -132,6 +132,19 @@ class PPDTest(TestCase):
         })
 
 
+    def test_deleteObject(self):
+        """
+        You can delete objects by id
+        """
+        i = PPD()
+        id1 = i.addObject({'foo': 'bar'})
+        i.deleteObject(id1)
+
+        objects = i.listObjects()
+        self.assertEqual(len(objects), 0,
+            "Should have deleted the object")
+
+
     def test_addFile_getFile(self):
         """
         You can add a file and get the contents back.
@@ -146,6 +159,20 @@ class PPDTest(TestCase):
         contents = i.getFileContents(obj['_file_id'])
         self.assertEqual(contents, '\x00\x01Hey\xff',
             "Should return the contents provided when attaching the file")
+
+
+    def test_deleteFile(self):
+        """
+        When you delete a file's metadata, the content is also deleted.
+        """
+        i = PPD()
+        fh = StringIO('\x00\x01Hey\xff')
+        obj_id = i.addFile(fh, 'something.exe', {'hey': 'ho'})
+        obj = i.getObject(obj_id)
+        file_id = obj['_file_id']
+
+        i.deleteObject(obj_id)
+        self.assertRaises(KeyError, i.getFileContents, file_id)
 
 
 class RuleBasedFileDumper_performActionTest(TestCase):
