@@ -48,10 +48,16 @@ files:
         - path: '/vuln/{vuln}'
           type: obj
 
+    # This will make a directory with no `_meta.yml` and all
+    # files in it have metadata `{"tag": "report"}`.
+
     - path: '/report'
       filter:
         tag: report
 
+    # This makes a sub-directory in /report/vuln for each
+    # host-vuln pair
+    
     - path: '/report/vuln/{host}-{vuln}'
       type: obj
 
