@@ -242,11 +242,11 @@ p.add_argument('meta',
 def catFile(args):
     ppd = getPPD(args)
     meta_glob = getFilter(args)
-    for obj in ppd.listObjects(meta_glob):
-        args.stdout.write(ppd.getFileContents(obj['_file_id']))
+    if meta_glob:
+        for obj in ppd.listObjects(meta_glob):
+            args.stdout.write(ppd.getFileContents(obj['_id']))
     for object_id in args.object_ids:
-        obj = ppd.getObject(object_id)
-        args.stdout.write(ppd.getFileContents(obj['_file_id']))
+        args.stdout.write(ppd.getFileContents(object_id))
     ppd.close()
 
 p = cmds.add_parser('cat',

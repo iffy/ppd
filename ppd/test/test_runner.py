@@ -70,10 +70,10 @@ class runTest(TestCase):
             "Should have dumped")
 
         # rm
-        self.runWithDatabase(['rm', '0'])
+        self.runWithDatabase(['rm', '1'])
         stdout, _ = self.runWithDatabase(['list'])
         self.assertEqual(stdout.count('foo'), 0,
-            "Should have deleted the foo:bar object")
+            "Should have deleted the foo:bar object:\n%s" % (stdout,))
 
         # attach from stdin
         self.runWithDatabase(['attach', 'filename:bob.txt'], stdin='the content\x22')

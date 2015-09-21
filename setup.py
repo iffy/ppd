@@ -17,7 +17,6 @@ setup(
     ],
     install_requires=[
         'structlog',
-        'unqlite',
         'PyYaml',
         'ordereddict',
     ],
