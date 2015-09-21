@@ -19,7 +19,7 @@ class PPDTest(TestCase):
         object_id = i.addObject({'foo': 'bar'})
         obj = i.getObject(object_id)
         self.assertEqual(obj['foo'], 'bar')
-        self.assertEqual(obj['__id'], object_id)
+        self.assertEqual(obj['_id'], object_id)
 
 
     def test_listObjects_none(self):
@@ -89,12 +89,12 @@ class PPDTest(TestCase):
         objects = i.updateObjects({'A': 'A'})
         self.assertEqual(len(objects), 2, "Should return matched objects")
         self.assertEqual(objects[0], {
-            '__id': id1,
+            '_id': id1,
             'foo': 'bar',
             'A': 'A',
         })
         self.assertEqual(objects[1], {
-            '__id': id2,
+            '_id': id2,
             'hey': 'ho',
             'A': 'A',
         })
@@ -111,14 +111,14 @@ class PPDTest(TestCase):
         objects = i.updateObjects({'A': 'A'}, {'foo': '*'})
         self.assertEqual(len(objects), 1, "Should return matched objects")
         self.assertEqual(objects[0], {
-            '__id': id1,
+            '_id': id1,
             'foo': 'bar',
             'A': 'A',
         })
 
         objects = i.listObjects()
         self.assertEqual(objects[1], {
-            '__id': id2,
+            '_id': id2,
             'hey': 'ho',
         }, "Should have left other object alone")
 
@@ -135,7 +135,7 @@ class PPDTest(TestCase):
         self.assertEqual(len(objects), 1,
             "Should return matching objects")
         self.assertEqual(objects[0], {
-            '__id': id1,
+            '_id': id1,
             'foo': 'bar',
         })
 
@@ -166,7 +166,8 @@ class PPDTest(TestCase):
         self.assertIn('_file_hash', obj, "Should include hash of file")
         contents = i.getFileContents(obj['_file_id'])
         self.assertEqual(contents, '\x00\x01Hey\xff',
-            "Should return the contents provided when attaching the file")
+            "Should return the contents provided when attaching the file"
+            " not: %r" % (contents,))
 
 
     def test_addFile_filenameFromMetadata(self):
@@ -213,18 +214,20 @@ class PPDTest(TestCase):
         a = PPD(dbfile)
         b = PPD(dbfile)
         a.addObject({'foo': 'bar'})
-        print a.listObjects()
-        print b.listObjects()
-        self.assertEqual(len(b.listObjects()), 1)
+        self.assertEqual(len(b.listObjects()), 1,
+            "Adding should be concurrent")
 
         a.updateObjects({'boo': 'hoo'})
-        self.assertEqual(len(b.listObjects({'boo': 'hoo'})), 1)
+        self.assertEqual(len(b.listObjects({'boo': 'hoo'})), 1,
+            "Updating should be concurrent")
 
-        a.deleteObject(0)
-        self.assertEqual(len(b.listObjects()), 0)
+        a.deleteObject(1)
+        self.assertEqual(len(b.listObjects()), 0,
+            "Deleting should be concurrent")
 
         a.addFile(StringIO('foo'), 'foo.txt', {})
-        self.assertEqual(len(b.listObjects()), 1)
+        self.assertEqual(len(b.listObjects()), 1,
+            "Adding files should be concurrent")
 
 
 class RuleBasedFileDumper_performActionTest(TestCase):
@@ -237,13 +240,13 @@ class RuleBasedFileDumper_performActionTest(TestCase):
         tmpdir = FilePath(self.mktemp())
         reported = []
         obj = {
-            '__id': 45,
+            '_id': 45,
             'name': 'hi',
             'guy': 'smiley',
         }
         dumper = RuleBasedFileDumper(tmpdir.path, reporter=reported.append)
         dumper.performAction({
-            'merge_yaml': 'foo/bar/{__id}.yml',
+            'merge_yaml': 'foo/bar/{_id}.yml',
         }, obj)
 
         yml = tmpdir.child('foo').child('bar').child('45.yml')
@@ -263,17 +266,17 @@ class RuleBasedFileDumper_performActionTest(TestCase):
         tmpdir = FilePath(self.mktemp())
         reported = []
         obj = {
-            '__id': 45,
+            '_id': 45,
             'name': 'hi',
             'guy': 'smiley',
         }
         dumper = RuleBasedFileDumper(tmpdir.path, reporter=reported.append)
         dumper.performAction({
-            'merge_yaml': 'foo/bar/{__id}.yml',
+            'merge_yaml': 'foo/bar/{_id}.yml',
         }, obj)
         reported.pop()
         dumper.performAction({
-            'merge_yaml': 'foo/bar/{__id}.yml',
+            'merge_yaml': 'foo/bar/{_id}.yml',
         }, obj)
 
         yml = tmpdir.child('foo').child('bar').child('45.yml')
@@ -294,19 +297,19 @@ class RuleBasedFileDumper_performActionTest(TestCase):
         tmpdir = FilePath(self.mktemp())
         reported = []
         obj = {
-            '__id': 45,
+            '_id': 45,
             'name': 'hi',
             'guy': 'smiley',
         }
         dumper = RuleBasedFileDumper(tmpdir.path, reporter=reported.append)
         dumper.performAction({
-            'merge_yaml': 'foo/bar/{__id}.yml',
+            'merge_yaml': 'foo/bar/{_id}.yml',
         }, obj)
         reported.pop()
         dumper.performAction({
-            'merge_yaml': 'foo/bar/{__id}.yml',
+            'merge_yaml': 'foo/bar/{_id}.yml',
         }, {
-            '__id': 45,
+            '_id': 45,
             'name': 'bob',
         })
 
@@ -315,7 +318,7 @@ class RuleBasedFileDumper_performActionTest(TestCase):
 
         content = yaml.safe_load(yml.getContent())
         self.assertEqual(content, {
-            '__id': 45,
+            '_id': 45,
             'name': 'bob',
             'guy': 'smiley',
         },
@@ -405,7 +408,7 @@ class RuleBasedFileDumper_performActionTest(TestCase):
 class PPD_last_updatedTest(TestCase):
 
     def fakeLastUpdated(self, ppd, what):
-        ppd.db['sys:last_updated'] = str(what)
+        ppd.kv['sys:last_updated'] = str(what)
 
 
     def test_implementation(self):
@@ -584,7 +587,7 @@ class PPD_autoDumpTest(TestCase):
             }
         ]
         self.reported = []
-        self.ppd = PPD(':mem:',
+        self.ppd = PPD(':memory:',
             RuleBasedFileDumper(self.tmpdir.path,
                                 rules=rules,
                                 reporter=self.reported.append),
