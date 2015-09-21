@@ -371,6 +371,59 @@ class RuleBasedFileDumper_performActionTest(TestCase):
             "Should have reported the write because something changed")
 
 
+class PPD_last_updatedTest(TestCase):
+
+    def fakeLastUpdated(self, ppd, what):
+        ppd.db['sys:last_updated'] = str(what)
+
+
+    def test_implementation(self):
+        """
+        Make sure the following tests are faking the right stuff.
+        """
+        ppd = PPD()
+        self.fakeLastUpdated(ppd, 65.0)
+        self.assertEqual(ppd.last_updated(), 65.0)
+
+    def test_addObject(self):
+        """
+        Adding an object should change last_updated
+        """
+        ppd = PPD()
+        self.fakeLastUpdated(ppd, 12.2)
+        ppd.addObject({'foo': 'bar'})
+        self.assertNotEqual(ppd.last_updated(), 12.2)
+
+    def test_updateObject(self):
+        """
+        Updating an object should change last_updated.
+        """
+        ppd = PPD()
+        ppd.addObject({'foo': 'bar'})
+        self.fakeLastUpdated(ppd, 12.2)
+        ppd.updateObjects({'foo': 'baz'})
+        self.assertNotEqual(ppd.last_updated(), 12.2)
+
+    def test_addFile(self):
+        """
+        Adding a file should update last_updated.
+        """
+        ppd = PPD()
+        self.fakeLastUpdated(ppd, 12.2)
+        ppd.addFile(StringIO('foo'), 'jim.txt', {})
+        self.assertNotEqual(ppd.last_updated(), 12.2)
+
+    def test_deleteObject(self):
+        """
+        Deleting an object is an update
+        """
+        ppd = PPD()
+        ppd.addObject({'foo': 'bar'})
+        self.fakeLastUpdated(ppd, 12.2)
+        ppd.deleteObject(0)
+        self.assertNotEqual(ppd.last_updated(), 12.2)
+
+
 class RuleBasedFileDumper_dumpObjectTest(TestCase):
 
 
