@@ -1,12 +1,15 @@
 # Copyright (c) The ppd team
 # See LICENSE for details.
 
-from unqlite import UnQLite
+try:
+    from pysqlite2 import dbapi2 as sqlite
+except ImportError:
+    import sqlite3 as sqlite
 
 import os
 import yaml
 import time
-from uuid import uuid4
+import json
 from fnmatch import fnmatch
 from functools import partial, wraps
 from hashlib import sha1
@@ -42,10 +45,134 @@ def hashFile(fh, chunk_size=1024):
     fh.seek(original_seek)
     return h.hexdigest()
 
+def autocommit(f):
+    @wraps(f)
+    def deco(self, *args, **kwargs):
+        self.db.commit()
+        ret = f(self, *args, **kwargs)
+        self.db.commit()
+        return ret
+    return deco
+
+
+# This mimicks a key-value store and doesn't use some of SQL's
+# best features.  This is (sort of) intentional.
+CREATE_SQL = [
+    '''CREATE TABLE IF NOT EXISTS keyvalues (
+        key blob,
+        value blob,
+        UNIQUE (key)
+    )''',
+    '''CREATE TABLE IF NOT EXISTS objects (
+        _id INTEGER PRIMARY KEY,
+        _created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        collection_key TEXT,
+        data BLOB
+    )''',
+    '''CREATE TABLE IF NOT EXISTS files (
+        _id INTEGER PRIMARY KEY,
+        _created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        content BLOB
+    )''',
+]
+
+
+class Collection(object):
+
+    def __init__(self, db, name):
+        self.db = db
+        self.name = name
+
+    def _combine(self, x):
+        data = json.loads(x[1])
+        data.update({
+            '_id': x[0],
+        })
+        return data
+
+    def add(self, data):
+        encoded = json.dumps(data)
+        r = self.db.execute('insert into objects (collection_key, data)'
+            ' values (?, ?)', (self.name, encoded))
+        ident = r.lastrowid
+        return ident
+
+    def list(self, filter_fn=None):
+        r = self.db.execute('select _id, data from objects'
+            ' where collection_key=?', (self.name,))
+        return filter(filter_fn, map(self._combine, r.fetchall()))
+
+    def fetch(self, id):
+        r = self.db.execute('select _id, data from objects'
+            ' where collection_key=? and _id=?', (self.name, id))
+        row = r.fetchone()
+        if not row:
+            return {}
+        return self._combine(row)
+
+    def update(self, id, data):
+        encoded = json.dumps(data)
+        self.db.execute('update objects set data=?'
+            ' where collection_key=? and _id=?', (encoded, self.name, id))
+
+    def delete(self, id):
+        self.db.execute('delete from objects'
+            ' where collection_key=? and _id=?', (self.name, id))
+
+
+class KeyValue(object):
+
+    def __init__(self, db):
+        self.db = db
+
+    @autocommit
+    def __getitem__(self, key):
+        r = self.db.execute('select value from keyvalues where key=?', (key,))
+        row = r.fetchone()
+        if not row:
+            raise KeyError(key)
+        return str(row[0])
+
+    @autocommit
+    def __setitem__(self, key, value):
+        try:
+            self.db.execute('insert into keyvalues (key, value) values (?,?)',
+                (key, buffer(value)))
+        except sqlite.IntegrityError:
+            self.db.execute('update keyvalues set value=? where key=?',
+                (buffer(value), key))
+
+
+class FileStore(object):
+
+    def __init__(self, db):
+        self.db = db
+
+    @autocommit
+    def add(self, fh):
+        data = fh.read()
+        h = hashFile(StringIO(data))
+        r = self.db.execute('insert into files (content) values (?)', (buffer(data),))
+        ident = r.lastrowid
+        return ident, h
+
+    @autocommit
+    def getContent(self, file_id):
+        r = self.db.execute('select content from files where _id=?', (file_id,))
+        row = r.fetchone()
+        if not row:
+            raise KeyError(file_id)
+        return str(row[0])
+
+    @autocommit
+    def delete(self, file_id):
+        self.db.execute('delete from files where _id=?', (file_id,))
+
+
 
 class PPD(object):
 
-    def __init__(self, dbfile=':mem:', dumper=None, auto_dump=False):
+    def __init__(self, dbfile=':memory:', dumper=None, auto_dump=False):
         """
         If no dbfile is provided, an in-memory database will be used.
         """
@@ -75,7 +202,7 @@ class PPD(object):
         @wraps(f)
         def deco(self, *args, **kwargs):
             ret = f(self, *args, **kwargs)
-            self.db['sys:last_updated'] = str(float(time.time()))
+            self.kv['sys:last_updated'] = str(float(time.time()))
             return ret
         return deco
     
@@ -83,17 +210,20 @@ class PPD(object):
     @property
     def db(self):
         if self._db is None:
-            self._db = UnQLite(self.dbfile)
+            self._db = sqlite.connect(self.dbfile)
+            for sql in CREATE_SQL:
+                self._db.execute(sql)
         return self._db
 
+    @property
+    def kv(self):
+        return KeyValue(self.db)
 
     _objects = None
     @property
     def objects(self):
         if self._objects is None:
-            self._objects = self.db.collection('objects')
-            if not self._objects.exists():
-                self._objects.create()
+            self._objects = Collection(self.db, 'objects')
         return self._objects
 
 
@@ -103,37 +233,43 @@ class PPD(object):
 
     def close(self):
         self.db.close()
+        self._objects = None
+        self._db = None
 
 
+    @autocommit
     def last_updated(self):
         """
         Get the timestamp when the database was last updated
         """
         try:
-            return float(self.db['sys:last_updated'])
+            return float(self.kv['sys:last_updated'])
         except KeyError:
             return 0.0
 
-
+    @autocommit
     def dump(self, filter_glob=None):
         for obj in self.listObjects(filter_glob=filter_glob):
             self.dumper.dumpObject(obj)
 
 
+    @autocommit
     @markUpdated
     @autoDump
     def addObject(self, obj):
         """
         Add an object to the obj database.
         """
-        return self.objects.store(obj)
+        return self.objects.add(obj)
 
+    @autocommit
     def getObject(self, object_id):
         """
         Get an object by its id
         """
         return self.objects.fetch(object_id)
 
+    @autocommit
     @markUpdated
     def deleteObject(self, object_id):
         """
@@ -141,9 +277,10 @@ class PPD(object):
         """
         obj = self.getObject(object_id)
         if '_file_id' in obj:
-            self.db.delete(obj['_file_id'])
+            FileStore(self.db).delete(obj['_file_id'])
         self.objects.delete(object_id)
 
+    @autocommit
     @markUpdated
     @autoDump
     def updateObjects(self, data, filter_glob=None):
@@ -155,50 +292,50 @@ class PPD(object):
             new_obj = obj.copy()
             new_obj.update(data)
             if new_obj != obj:
-                self.objects.update(new_obj['__id'], new_obj)
-                logger.msg('updated', obj_id=new_obj['__id'])
+                self.objects.update(new_obj['_id'], new_obj)
+                logger.msg('updated', obj_id=new_obj['_id'])
             ret.append(new_obj)
         return ret
 
-
+    @autocommit
     def listObjects(self, filter_glob=None, id_only=False):
         """
         List objects in the object database.
         """
-        func = None
-        if filter_glob is None:
-            func = partial(self.objects.all)
-        else:
-            func = partial(self.objects.filter, mkFilterFunc(filter_glob))
+        filter_fn = None
+        if filter_glob is not None:
+            filter_fn = mkFilterFunc(filter_glob)
+        func = partial(self.objects.list, filter_fn)
 
         if id_only:
-            return [x['__id'] for x in func()]
+            return [x['_id'] for x in func()]
         else:
             return func()
 
+    @autocommit
     @markUpdated
     @autoDump
     def addFile(self, fh, filename, metadata):
         """
         Add a file to the store.
         """
-        file_id = 'file-{0}'.format(uuid4())
-        self.db[file_id] = fh.read()
+        file_id, file_hash = FileStore(self.db).add(fh)
         metadata = metadata.copy()
         filename = filename or metadata.get('filename', None)
         if not filename:
             raise ValueError('No filename provided')
         metadata['filename'] = os.path.basename(filename)
         metadata['_file_id'] = file_id
-        metadata['_file_hash'] = hashFile(StringIO(self.db[file_id]))
-        return self.objects.store(metadata)
+        metadata['_file_hash'] = file_hash
+        return self.objects.add(metadata)
 
-
-    def getFileContents(self, file_id):
+    @autocommit
+    def getFileContents(self, obj_id):
         """
         Get the file contents.
         """
-        return self.db[file_id]
+        obj = self.getObject(obj_id)
+        return FileStore(self.db).getContent(obj['_file_id'])
 
 
 
