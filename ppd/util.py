@@ -78,6 +78,12 @@ class PPD(object):
             self.db['sys:last_updated'] = str(float(time.time()))
             return ret
         return deco
+
+    def autocommit(f):
+        @wraps(f)
+        def deco(self, *args, **kwargs):
+            return f(self, *args, **kwargs)
+        return deco
     
     _db = None
     @property

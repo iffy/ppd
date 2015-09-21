@@ -22,6 +22,14 @@ class PPDTest(TestCase):
         self.assertEqual(obj['__id'], object_id)
 
 
+    def test_listObjects_none(self):
+        """
+        If there are no objects, return an empty list, not None
+        """
+        i = PPD()
+        self.assertEqual(i.listObjects(), [])
+
+
     def test_listObjects_all(self):
         """
         You can list all objects.
@@ -194,6 +202,29 @@ class PPDTest(TestCase):
 
         i.deleteObject(obj_id)
         self.assertRaises(KeyError, i.getFileContents, file_id)
+
+
+    def test_multipleUsers(self):
+        """
+        Two instances of PPD using the same database should see
+        the other guy's changes all the time.
+        """
+        dbfile = self.mktemp()
+        a = PPD(dbfile)
+        b = PPD(dbfile)
+        a.addObject({'foo': 'bar'})
+        print a.listObjects()
+        print b.listObjects()
+        self.assertEqual(len(b.listObjects()), 1)
+
+        a.updateObjects({'boo': 'hoo'})
+        self.assertEqual(len(b.listObjects({'boo': 'hoo'})), 1)
+
+        a.deleteObject(0)
+        self.assertEqual(len(b.listObjects()), 0)
+
+        a.addFile(StringIO('foo'), 'foo.txt', {})
+        self.assertEqual(len(b.listObjects()), 1)
 
 
 class RuleBasedFileDumper_performActionTest(TestCase):
