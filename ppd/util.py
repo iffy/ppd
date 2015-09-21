@@ -82,7 +82,11 @@ class PPD(object):
     def autocommit(f):
         @wraps(f)
         def deco(self, *args, **kwargs):
-            return f(self, *args, **kwargs)
+            try:
+                return f(self, *args, **kwargs)
+            finally:
+                print 'finally'
+                self.close()
         return deco
     
     _db = None
@@ -109,8 +113,11 @@ class PPD(object):
 
     def close(self):
         self.db.close()
+        self._objects = None
+        self._db = None
 
 
+    @autocommit
     def last_updated(self):
         """
         Get the timestamp when the database was last updated
@@ -120,12 +127,13 @@ class PPD(object):
         except KeyError:
             return 0.0
 
-
+    @autocommit
     def dump(self, filter_glob=None):
         for obj in self.listObjects(filter_glob=filter_glob):
             self.dumper.dumpObject(obj)
 
 
+    @autocommit
     @markUpdated
     @autoDump
     def addObject(self, obj):
@@ -134,12 +142,14 @@ class PPD(object):
         """
         return self.objects.store(obj)
 
+    @autocommit
     def getObject(self, object_id):
         """
         Get an object by its id
         """
         return self.objects.fetch(object_id)
 
+    @autocommit
     @markUpdated
     def deleteObject(self, object_id):
         """
@@ -150,6 +160,7 @@ class PPD(object):
             self.db.delete(obj['_file_id'])
         self.objects.delete(object_id)
 
+    @autocommit
     @markUpdated
     @autoDump
     def updateObjects(self, data, filter_glob=None):
@@ -166,7 +177,7 @@ class PPD(object):
             ret.append(new_obj)
         return ret
 
-
+    @autocommit
     def listObjects(self, filter_glob=None, id_only=False):
         """
         List objects in the object database.
@@ -182,6 +193,7 @@ class PPD(object):
         else:
             return func()
 
+    @autocommit
     @markUpdated
     @autoDump
     def addFile(self, fh, filename, metadata):
@@ -199,7 +211,7 @@ class PPD(object):
         metadata['_file_hash'] = hashFile(StringIO(self.db[file_id]))
         return self.objects.store(metadata)
 
-
+    @autocommit
     def getFileContents(self, file_id):
         """
         Get the file contents.
