@@ -1,41 +1,158 @@
 
-import logging
-from stat import S_IFDIR, S_IFLNK, S_IFREG
-import errno
 from time import time
+from stat import S_IFDIR, S_IFLNK, S_IFREG
 
+import errno
+import yaml
 
-import sys
-print sys.executable
-print '\n'.join(sys.path)
+import subprocess
 
-from fuse import FUSE, LoggingMixIn, Operations, FuseOSError
+from fuse import LoggingMixIn, Operations, FuseOSError
 
 if not hasattr(__builtins__, 'bytes'):
     bytes = str
 
 
+
+class BaseResource(object):
+
+    isFile = False
+    _now = time()
+
+    def listChildren(self):
+        raise FuseOSError(errno.ENOENT)
+
+    def get_size(self):
+        return 0
+
+    def get_ctime(self):
+        return self._now
+
+    def get_mtime(self):
+        return self._now
+
+    def get_atime(self):
+        return self._now
+
+    def getattr(self):
+        if self.isFile:
+            return dict(st_mode=S_IFREG, st_nlink=1,
+                    st_size=self.get_size(),
+                    st_ctime=self.get_ctime(),
+                    st_mtime=self.get_mtime(),
+                    st_atime=self.get_atime()) 
+        else:
+            return dict(st_mode=(S_IFDIR | 0755),
+                        st_ctime=self.get_ctime(),
+                        st_mtime=self.get_mtime(),
+                        st_atime=self.get_atime(),
+                        st_nlink=2)
+
+    def child(self, segment):
+        raise NotImplemented
+
+    def childFromPath(self, path):
+        if not path:
+            return self
+        parts = path.split('/', 1)
+        child = self.child(parts[0])
+        if len(parts) > 1:
+            return child.getChild(parts[1])
+        else:
+            return child
+
+    # file operations
+
+    def open(self, flags):
+        return 0
+        
+    def read(self, size, offset):
+        return ''
+
+
+class StaticDirectory(BaseResource):
+
+    isFile = False
+
+    def __init__(self):
+        self._children = {}
+
+    def addChild(self, segment, child):
+        self._children[segment] = child
+
+    def listChildren(self):
+        print 'StaticDirectory.listChildren'
+        return ['.', '..'] + sorted(self._children)
+
+    def child(self, segment):
+        return self._children[segment]
+
+
+
+
+class ScriptableFile(BaseResource):
+
+    isFile = True
+
+    def __init__(self, ppd, in_script=None, out_script=None):
+        self.ppd = ppd
+        self.in_script = in_script
+        self.out_script = out_script
+
+    def _runOutputScript(self):
+        print 'running _runOutputScript'
+        objects = self.ppd.listObjects()
+        yaml_string = yaml.safe_dump(objects, default_flow_style=False)
+        p = subprocess.Popen(self.out_script,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
+        out, err = p.communicate(yaml_string)
+        return out
+
+    def get_size(self):
+        return len(self._runOutputScript())
+
+    def open(self, flags):
+        return 0
+
+    def read(self, size, offset):
+        return self._runOutputScript()[offset:offset+size]
+
+
+file_types = {
+    'scriptable': ScriptableFile,
+}
+
+
+def generateRoot(ppd, paths):
+    root = StaticDirectory()
+    for item in paths:
+        segment = item.pop('path')
+        item_type = item.keys()[0]
+        kwargs = item[item_type]
+        cls = file_types[item_type]
+        root.addChild(segment, cls(ppd, **kwargs))
+    return root
+
+
+def getFileSystem(ppd, paths):
+    return FileSystem(generateRoot(ppd, paths))
+
+
 class FileSystem(LoggingMixIn, Operations):
 
-    def __init__(self, ppd):
-        self._ppd = ppd
+    def __init__(self, resource):
+        self.root = resource
 
-    def _patternFromPath(self, path):
-        pattern = {}
-        last_key = None
-        parts = path.lstrip('/').split('/')
-        for segment in parts:
-            if not segment:
-                continue
-            if last_key is None:
-                # key
-                last_key = segment
-                pattern[last_key] = '*'
-            else:
-                # value
-                pattern[last_key] = segment
-                last_key = None
-        return pattern, last_key
+    def resource(self, path):
+        path = path.lstrip('/')
+        try:
+            ret = self.root.childFromPath(path)
+            print ret
+            return ret
+        except KeyError:
+            raise FuseOSError(errno.ENOENT)
 
     def chmod(self, path, mode):
         return 0
@@ -49,34 +166,8 @@ class FileSystem(LoggingMixIn, Operations):
         return self.fd
 
     def getattr(self, path, fh=None):
-        print '\ngetattr', path, fh
-        now = time()
-        if path == '/':
-            return dict(st_mode=(S_IFDIR | 0755), st_ctime=now,
-                        st_mtime=now, st_atime=now, st_nlink=2)
-
-        pattern, last_key = self._patternFromPath(path)
-        print 'last_key', last_key
-        print 'pattern', pattern
-        if last_key:
-            # key
-            return dict(st_mode=(S_IFDIR | 0755), st_ctime=now,
-                        st_mtime=now, st_atime=now, st_nlink=2)
-        else:
-            # value
-            objects = self._ppd.listObjects(pattern)
-            keys = set()
-            for obj in objects:
-                keys.update([x for x in obj.keys() if not x.startswith('_')])
-            print 'objects', objects
-            print 'keys', keys
-            return dict(st_mode=(S_IFDIR | 0755), st_ctime=now,
-                        st_mtime=now, st_atime=now, st_nlink=2)
-        return dict(st_mode=S_IFREG, st_nlink=1,
-                    st_size=0, st_ctime=time(), st_mtime=time(),
-                    st_atime=time())
-        
-        raise FuseOSError(errno.ENOENT)
+        print 'getattr', path, fh
+        return self.resource(path).getattr()
 
     def getxattr(self, path, name, position=0):
         print 'getxattr', path, name, position
@@ -92,30 +183,15 @@ class FileSystem(LoggingMixIn, Operations):
 
     def open(self, path, flags):
         print 'open', path, flags
-        return 0
+        return self.resource(path).open(flags)
 
     def read(self, path, size, offset, fh):
         print 'read', path, size, offset, fh
-        return self.data[path][offset:offset + size]
+        return self.resource(path).read(size, offset)
 
     def readdir(self, path, fh):
         print 'readdir', path, fh
-        
-        pattern, last_key = self._patternFromPath(path)
-
-        print 'last_key', last_key
-        print 'pattern', pattern
-        objects = self._ppd.listObjects(pattern)
-        keys = set()
-        for obj in objects:
-            if last_key:
-                keys.add(obj[last_key])
-            else:
-                keys.update([x for x in obj.keys() if not x.startswith('_')])
-        keys = keys - set(pattern)
-        print 'keys', keys
-
-        return ['.', '..'] + sorted(keys)
+        return self.resource(path).listChildren()
 
     def readlink(self, path):
         print 'readlink', path
