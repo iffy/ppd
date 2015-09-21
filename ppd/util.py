@@ -330,11 +330,12 @@ class PPD(object):
         return self.objects.add(metadata)
 
     @autocommit
-    def getFileContents(self, file_id):
+    def getFileContents(self, obj_id):
         """
         Get the file contents.
         """
-        return FileStore(self.db).getContent(file_id)
+        obj = self.getObject(obj_id)
+        return FileStore(self.db).getContent(obj['_file_id'])
 
 
 
