@@ -284,7 +284,10 @@ def runFilesystem(args):
     from fuse import FUSE
     ppd = getPPD(args)
     layout = yaml.safe_load(open(args.fslayout, 'rb'))
-    FUSE(getFileSystem(ppd, layout['paths']), args.mountpoint, foreground=True)
+    fs = getFileSystem(ppd, layout['paths'])
+    if not os.path.exists(args.mountpoint):
+        os.makedirs(args.mountpoint)
+    FUSE(fs, args.mountpoint, direct_io=True, foreground=True)
 
 p = cmds.add_parser('fs',
     help='Start a virtual filesystem for file-like access')
@@ -311,3 +314,7 @@ def run(cmd_strings=None, stdout=sys.stdout, stderr=sys.stderr, stdin=sys.stdin)
 
     logger.msg(args=args)
     args.func(args)
+
+
+if __name__ == '__main__':
+    run()

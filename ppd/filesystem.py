@@ -3,8 +3,11 @@ from time import time
 from stat import S_IFDIR, S_IFLNK, S_IFREG
 from functools import wraps
 
+from StringIO import StringIO
+
 import errno
 import yaml
+import re
 
 import subprocess
 
@@ -14,6 +17,7 @@ if not hasattr(__builtins__, 'bytes'):
     bytes = str
 
 
+_fd = 0
 
 class BaseResource(object):
 
@@ -58,17 +62,31 @@ class BaseResource(object):
         parts = path.split('/', 1)
         child = self.child(parts[0])
         if len(parts) > 1:
-            return child.getChild(parts[1])
+            return child.childFromPath(parts[1])
         else:
             return child
 
     # file operations
 
     def open(self, flags):
-        return 0
+        global _fd
+        _fd += 1
+        return _fd
         
     def read(self, size, offset):
         return ''
+
+    def write(self, data, offset):
+        return len(data)
+
+    def create(self, mode):
+        raise NotImplemented
+
+
+    # directory operations
+
+    def mkdir(self, mode):
+        raise NotImplemented
 
 
 class StaticDirectory(BaseResource):
@@ -94,7 +112,7 @@ class StaticDirectory(BaseResource):
 class ScriptableFile(BaseResource):
 
     isFile = True
-    _last_run = -1
+    _last_run = 0
 
     def __init__(self, ppd, in_script=None, out_script=None):
         self.ppd = ppd
@@ -106,7 +124,10 @@ class ScriptableFile(BaseResource):
         cache_key = f.__name__
         @wraps(f)
         def deco(self, *args, **kwargs):
-            if self.ppd.last_updated() > self._last_run:
+            last_updated = self.ppd.last_updated()
+            print 'last_updated', last_updated
+            print 'last_run    ', self._last_run
+            if last_updated > self._last_run or cache_key not in self._cache:
                 self._cache[cache_key] = f(self, *args, **kwargs)
                 self._last_run = self.ppd.last_updated()
             return self._cache[cache_key]
@@ -127,6 +148,9 @@ class ScriptableFile(BaseResource):
     def get_size(self):
         return len(self._runOutputScript())
 
+    def get_mtime(self):
+        return int(self._last_run)
+
     def open(self, flags):
         return 0
 
@@ -134,8 +158,133 @@ class ScriptableFile(BaseResource):
         return self._runOutputScript()[offset:offset+size]
 
 
+class ObjectDirectory(BaseResource):
+
+    isFile = False
+    r_display = re.compile(r'({.*?})')
+
+    def __init__(self, ppd, display):
+        self.ppd = ppd
+        data = self.processDisplay(display)
+        self.regex = data['regex']
+        self.pattern = data['pattern']
+        self.display = data['display']
+
+
+    def processDisplay(self, display):
+        parts = self.r_display.split(display)
+        keys = []
+        regex = []
+        for part in parts:
+            if part.startswith('{'):
+                key = part[1:-1]
+                keys.append(key)
+                regex.append(r'(?P<' + key + '>.*?)')
+            else:
+                regex.append(part)
+        pattern = {}
+        for key in keys:
+            pattern[key] = '*'
+        
+        return {
+            'display': display,
+            'pattern': pattern,
+            'regex': re.compile('^' + ''.join(regex) + '$'),
+        }
+
+    def listChildren(self):
+        objects = self.ppd.listObjects(self.pattern)
+        displays = [self.display.format(**x) for x in objects]
+        unique = set(displays)
+        return ['.', '..'] + sorted(unique)
+
+    def child(self, segment):
+        m = self.regex.match(segment)
+        print 'match', m
+        print m.groupdict()
+        pattern = self.pattern.copy()
+        for k,v in m.groupdict().items():
+            pattern[k] = v
+        return SingleObjectDirectory(self.ppd, pattern)
+
+    def mkdir(self, mode):
+        print self, 'mkdir', mode
+
+
+class SingleObjectDirectory(BaseResource):
+
+    isFile = False
+
+    def __init__(self, ppd, filter):
+        self.ppd = ppd
+        self.filter = filter
+
+    def listChildren(self):
+        pattern = self.filter.copy()
+        pattern['_file_id'] = '*'
+        files = self.ppd.listObjects(pattern)
+        names = [x['filename'] for x in files]
+        return ['.', '..'] + sorted(names)
+
+    def child(self, segment):
+        pattern = self.filter.copy()
+        pattern['filename'] = segment
+        files = self.ppd.listObjects(pattern)
+        if files:
+            return File(self.ppd, files[0]['_id'])
+        else:
+            return PotentialFile(self.ppd, pattern)
+
+    def mkdir(self, mode):
+        print self, 'mkdir', mode
+
+
+class File(BaseResource):
+
+    isFile = True
+
+    def __init__(self, ppd, object_id):
+        self.ppd = ppd
+        self.object_id = object_id
+
+    def get_size(self):
+        content = self.ppd.getFileContents(self.object_id)
+        return len(content)
+
+    def read(self, size, offset):
+        return self.ppd.getFileContents(self.object_id)[offset:offset+size]
+
+    def truncate(self, length):
+        print self, 'truncate', length
+        self.ppd.setFileContents(self.object_id, StringIO(''))
+
+    def write(self, data, offset):
+        print self, 'write', repr(data), offset
+        content = StringIO(self.ppd.getFileContents(self.object_id))
+        content.seek(offset)
+        content.write(data)
+        self.ppd.setFileContents(self.object_id, content)
+        return len(data)
+
+
+
+class PotentialFile(BaseResource):
+
+    isFile = True
+
+    def __init__(self, ppd, metadata):
+        self.ppd = ppd
+        self.metadata = metadata
+
+    def create(self, mode):
+        print self, 'create', mode
+        self.ppd.addFile(StringIO(''), None, self.metadata)
+        return 0
+
+
 file_types = {
     'scriptable': ScriptableFile,
+    'objdir': ObjectDirectory,
 }
 
 
@@ -168,6 +317,15 @@ class FileSystem(LoggingMixIn, Operations):
         except KeyError:
             raise FuseOSError(errno.ENOENT)
 
+    # ---------------------------
+
+    def access(self, path, amode):
+        print 'access', path, amode
+        return 0
+
+    def bmap(self, path, blocksize, idx):
+        print 'bmap', path, blocksize, idx
+
     def chmod(self, path, mode):
         return 0
 
@@ -177,7 +335,7 @@ class FileSystem(LoggingMixIn, Operations):
 
     def create(self, path, mode):
         print 'create', path, mode
-        return self.fd
+        return self.resource(path).create(mode)
 
     def getattr(self, path, fh=None):
         print 'getattr', path, fh
@@ -193,7 +351,7 @@ class FileSystem(LoggingMixIn, Operations):
 
     def mkdir(self, path, mode):
         print 'mkdir', path, mode
-        pass
+        return self.resource(path).mkdir(mode)
 
     def open(self, path, flags):
         print 'open', path, flags
@@ -202,6 +360,15 @@ class FileSystem(LoggingMixIn, Operations):
     def read(self, path, size, offset, fh):
         print 'read', path, size, offset, fh
         return self.resource(path).read(size, offset)
+
+    def fsync(self, path, datasync, fh):
+        print 'fsync', path, datasync, fh
+
+    def fsyncdir(self, *args, **kwargs):
+        print 'fsyncdir', args, kwargs
+
+    def flush(self, path, fh):
+        print 'flush', path, fh
 
     def readdir(self, path, fh):
         print 'readdir', path, fh
@@ -218,6 +385,9 @@ class FileSystem(LoggingMixIn, Operations):
     #         del attrs[name]
     #     except KeyError:
     #         pass        # Should return ENOATTR
+
+    def release(self, path, fip):
+        print 'release', path, fip
 
     def rename(self, old, new):
         print 'rename', old, new
@@ -244,8 +414,7 @@ class FileSystem(LoggingMixIn, Operations):
 
     def truncate(self, path, length, fh=None):
         print 'truncate', path, length, fh
-        self.data[path] = self.data[path][:length]
-        self.files[path]['st_size'] = length
+        return self.resource(path).truncate(length)
 
     def unlink(self, path):
         print 'unlink', path
@@ -260,7 +429,5 @@ class FileSystem(LoggingMixIn, Operations):
 
     def write(self, path, data, offset, fh):
         print 'write', path, data, offset, fh
-        self.data[path] = self.data[path][:offset] + data
-        self.files[path]['st_size'] = len(self.data[path])
-        return len(data)
+        return self.resource(path).write(data, offset)
 

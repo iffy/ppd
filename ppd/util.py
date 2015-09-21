@@ -165,6 +165,11 @@ class FileStore(object):
         return str(row[0])
 
     @autocommit
+    def setContent(self, file_id, fh):
+        self.db.execute('update files set content=? where _id=?',
+            (buffer(fh.read()), file_id))
+
+    @autocommit
     def delete(self, file_id):
         self.db.execute('delete from files where _id=?', (file_id,))
 
@@ -210,7 +215,7 @@ class PPD(object):
     @property
     def db(self):
         if self._db is None:
-            self._db = sqlite.connect(self.dbfile)
+            self._db = sqlite.connect(self.dbfile, check_same_thread=False)
             for sql in CREATE_SQL:
                 self._db.execute(sql)
         return self._db
@@ -336,6 +341,15 @@ class PPD(object):
         """
         obj = self.getObject(obj_id)
         return FileStore(self.db).getContent(obj['_file_id'])
+
+    @autocommit
+    def setFileContents(self, obj_id, fh):
+        obj = self.getObject(obj_id)
+        content = fh.read()
+        file_hash = hashFile(StringIO(content))
+        obj['_file_hash'] = file_hash
+        self.objects.update(obj['_id'], obj)
+        FileStore(self.db).setContent(obj['_file_id'], StringIO(content))
 
 
 
