@@ -5,6 +5,7 @@ from unqlite import UnQLite
 
 import os
 import yaml
+import time
 from uuid import uuid4
 from fnmatch import fnmatch
 from functools import partial, wraps
@@ -69,6 +70,14 @@ class PPD(object):
                     self.dumper.dumpObject(obj)
             return ret
         return deco
+
+    def markUpdated(f):
+        @wraps(f)
+        def deco(self, *args, **kwargs):
+            ret = f(self, *args, **kwargs)
+            self.db['sys:last_updated'] = str(float(time.time()))
+            return ret
+        return deco
     
     _db = None
     @property
@@ -96,11 +105,22 @@ class PPD(object):
         self.db.close()
 
 
+    def last_updated(self):
+        """
+        Get the timestamp when the database was last updated
+        """
+        try:
+            return float(self.db['sys:last_updated'])
+        except KeyError:
+            return 0.0
+
+
     def dump(self, filter_glob=None):
         for obj in self.listObjects(filter_glob=filter_glob):
             self.dumper.dumpObject(obj)
 
 
+    @markUpdated
     @autoDump
     def addObject(self, obj):
         """
@@ -114,6 +134,7 @@ class PPD(object):
         """
         return self.objects.fetch(object_id)
 
+    @markUpdated
     def deleteObject(self, object_id):
         """
         Delete an object by id.
@@ -123,6 +144,7 @@ class PPD(object):
             self.db.delete(obj['_file_id'])
         self.objects.delete(object_id)
 
+    @markUpdated
     @autoDump
     def updateObjects(self, data, filter_glob=None):
         """
@@ -154,6 +176,7 @@ class PPD(object):
         else:
             return func()
 
+    @markUpdated
     @autoDump
     def addFile(self, fh, filename, metadata):
         """
