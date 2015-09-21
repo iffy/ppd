@@ -1,6 +1,7 @@
 
 from time import time
 from stat import S_IFDIR, S_IFLNK, S_IFREG
+from functools import wraps
 
 import errno
 import yaml
@@ -93,14 +94,27 @@ class StaticDirectory(BaseResource):
 class ScriptableFile(BaseResource):
 
     isFile = True
+    _last_run = -1
 
     def __init__(self, ppd, in_script=None, out_script=None):
         self.ppd = ppd
         self.in_script = in_script
         self.out_script = out_script
 
+    _cache = {}
+    def cache(f):
+        cache_key = f.__name__
+        @wraps(f)
+        def deco(self, *args, **kwargs):
+            if self.ppd.last_updated() > self._last_run:
+                self._cache[cache_key] = f(self, *args, **kwargs)
+                self._last_run = self.ppd.last_updated()
+            return self._cache[cache_key]
+        return deco
+
+    @cache
     def _runOutputScript(self):
-        print 'running _runOutputScript'
+        print '_runOutputScript'
         objects = self.ppd.listObjects()
         yaml_string = yaml.safe_dump(objects, default_flow_style=False)
         p = subprocess.Popen(self.out_script,
