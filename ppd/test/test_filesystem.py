@@ -53,6 +53,11 @@ class ProcessProtocol(protocol.ProcessProtocol):
         self.transport.signalProcess('KILL')
         return self.done
 
+def wait(seconds):
+    d = defer.Deferred()
+    reactor.callLater(seconds, d.callback, None)
+    return d
+
 
 class FileSystemTest(TestCase):
 
@@ -109,6 +114,46 @@ class FileSystemTest(TestCase):
 
     def ppd(self):
         return PPD(self.dbfile)
+
+
+    @defer.inlineCallbacks
+    def test_layout(self):
+        mountpoint = yield self.startFS({})
+
+        config_yml = mountpoint.child('config.yml')
+        self.assertTrue(config_yml.exists(),
+            "config.yml should exist")
+
+        # good write
+        layout = {
+            'paths': [
+                {
+                    'path': 'cattable',
+                    'scriptable': {
+                        'out_script': 'cat',
+                    },
+                },
+            ],
+        }
+        content = yaml.safe_dump(layout)
+        config_yml.setContent(content)
+        actual = yaml.safe_load(config_yml.getContent())
+        self.assertEqual(actual,
+            layout,
+            "Should read back config file:\nactual:%r\n\nexpected:%r" % (
+                actual, layout))
+        cattable = mountpoint.child('cattable')
+        ppd = self.ppd()
+        ppd.addObject({'foo': 'bar'})
+        content = cattable.getContent()
+        self.assertTrue('foo' in content,
+            "Should have the foo object in there: %r" % (content,))
+
+        # bad write
+        config_yml.setContent('not actually yaml! {bub!}\n\n\thoow')
+        self.assertEqual(yaml.safe_load(config_yml.getContent()),
+            layout,
+            "Should read back original config")
 
 
     @defer.inlineCallbacks

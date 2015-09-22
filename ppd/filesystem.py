@@ -8,6 +8,7 @@ from StringIO import StringIO
 import errno
 import yaml
 import re
+from weakref import WeakKeyDictionary
 
 import subprocess
 
@@ -109,19 +110,76 @@ class StaticDirectory(BaseResource):
 
     isFile = False
 
-    def __init__(self):
+    def __init__(self, ppd, path):
+        self._children = {}
+        self.ppd = ppd
+        self.path = path
+
+    def purge(self):
         self._children = {}
 
     def addChild(self, segment, child):
         self._children[segment] = child
 
     def listChildren(self):
-        print 'StaticDirectory.listChildren'
-        return ['.', '..'] + sorted(self._children)
+        all_children = self.listStaticChildren() + self.listDynamicChildren()
+        return ['.', '..'] + sorted(set(all_children))
+
+    def listStaticChildren(self):
+        return sorted(self._children)
+
+    def listDynamicChildren(self):
+        objects = self.ppd.listObjects({
+            'dirname': self.path,
+            '_file_id': '*',
+        })
+        return [x['filename'] for x in objects]
 
     def child(self, segment):
-        return self._children[segment]
+        if segment in self._children:
+            return self._children[segment]
+        
+        dynamic = self.listDynamicChildren()
+        if segment in dynamic:
+            objs = self.ppd.listObjects({
+                    'dirname': self.path,
+                    '_file_id': '*',
+                    'filename': segment,
+                })
+            return File(self.ppd, objs[0]['_id'], {
+                    'dirname': self.path,
+                })
+        else:
+            return PotentialFile(self.ppd,
+                {
+                    'dirname': self.path,
+                    'filename': segment,
+                })
 
+
+_cache = WeakKeyDictionary()
+_cache_last_run = WeakKeyDictionary()
+
+class _CacheKey(object):
+
+    def __init__(self, *args):
+        self.args = args
+
+
+def cache(f):
+    @wraps(f)
+    def deco(self, *args, **kwargs):
+        # a string?  really?
+        cache_key = getattr(self, '__cache_key__', None)
+        if not cache_key:
+            self.__cache_key__ = cache_key = _CacheKey(self, f)
+        last_updated = self.ppd.last_updated()
+        last_run = _cache_last_run.get(cache_key, 0)
+        if last_updated > last_run or cache_key not in _cache:
+            _cache[cache_key] = f(self, *args, **kwargs)
+            _cache_last_run[cache_key] = self.ppd.last_updated()
+        return _cache[cache_key]
+    return deco
 
 
 
@@ -134,20 +192,6 @@ class ScriptableFile(BaseResource):
         self.ppd = ppd
         self.in_script = in_script
         self.out_script = out_script
-
-    _cache = {}
-    def cache(f):
-        cache_key = f.__name__
-        @wraps(f)
-        def deco(self, *args, **kwargs):
-            last_updated = self.ppd.last_updated()
-            print 'last_updated', last_updated
-            print 'last_run    ', self._last_run
-            if last_updated > self._last_run or cache_key not in self._cache:
-                self._cache[cache_key] = f(self, *args, **kwargs)
-                self._last_run = self.ppd.last_updated()
-            return self._cache[cache_key]
-        return deco
 
     @cache
     def _runOutputScript(self):
@@ -283,7 +327,7 @@ class File(BaseResource):
             print 'renaming ->', newresource.metadata['filename']
             self.ppd.updateObjects({'filename': newresource.metadata['filename']},
                                    {'_id': str(self.object_id)})
-        elif isinstance(newresource, File):
+        elif isinstance(newresource, (File, ConfigFile)):
             # write the file.
             # This is probably not a good way to do this.
             newresource.write(self.read(self.get_size(), 0), 0)
@@ -293,7 +337,7 @@ class File(BaseResource):
 
     def truncate(self, length):
         print self, 'truncate', length
-        self.ppd.setFileContents(self.object_id, StringIO(''))
+        self.ppd.setFileContents(self.object_id, StringIO(' ' * length))
 
     def unlink(self):
         obj = self.ppd.getObject(self.object_id)
@@ -320,6 +364,52 @@ class File(BaseResource):
         return len(data)
 
 
+class ConfigFile(BaseResource):
+
+    isFile = True
+
+    def __init__(self, ppd, layout, root):
+        self.ppd = ppd
+        self.root = root
+        if layout:
+            self.layout = ppd.setCurrentFSLayout(layout)
+        else:
+            self.layout = ppd.getCurrentFSLayout()
+
+    @cache
+    def getContent(self):
+        return yaml.safe_dump(self.ppd.getCurrentFSLayout())
+
+    def get_size(self):
+        return len(self.getContent())
+
+    def read(self, size, offset):
+        content = self.getContent()
+        print 'reading config', content
+        return content[offset:offset+size]
+
+    def write(self, data, offset):
+        print 'writing', repr(data), offset
+        content = StringIO(self.getContent())
+        content.seek(offset)
+        content.write(data)
+        content.truncate()
+        content.seek(0)
+        print 'content', repr(content.getvalue())
+        try:
+            data = yaml.safe_load(content)
+        except Exception:
+            print 'bad config'
+            return 0
+        print 'data', data
+        self.ppd.setCurrentFSLayout(data)
+        print 'set current fs layout'
+        configureRoot(self.ppd, self.root, data)
+        print 'reconfigured root'
+
+    def unlink(self):
+        raise NotImplemented
+
 
 class PotentialFile(BaseResource):
 
@@ -333,7 +423,7 @@ class PotentialFile(BaseResource):
         return False
 
     def create(self, mode):
-        print self, 'create', mode
+        print self, 'create', mode, self.metadata
         self.ppd.addFile(StringIO(''), None, self.metadata)
         return 0
 
@@ -344,19 +434,35 @@ file_types = {
 }
 
 
-def generateRoot(ppd, paths):
-    root = StaticDirectory()
-    for item in paths:
-        segment = item.pop('path')
-        item_type = item.keys()[0]
-        kwargs = item[item_type]
-        cls = file_types[item_type]
-        root.addChild(segment, cls(ppd, **kwargs))
+def configureRoot(ppd, root, layout):
+    root.purge()
+    try:
+        if not layout:
+            layout = ppd.getCurrentFSLayout()
+        paths = layout.get('paths', [])
+        for item in paths:
+            item = item.copy()
+            segment = item.pop('path')
+            item_type = item.keys()[0]
+            kwargs = item[item_type]
+            cls = file_types[item_type]
+            root.addChild(segment, cls(ppd, **kwargs))
+    except Exception as e:
+        print 'Error', e
+
+    # config file
+    root.addChild('config.yml', ConfigFile(ppd, layout, root))
     return root
 
 
-def getFileSystem(ppd, paths):
-    return FileSystem(generateRoot(ppd, paths))
+def generateRoot(ppd, layout):
+    root = StaticDirectory(ppd, '/')
+    configureRoot(ppd, root, layout)
+    return root
+
+
+def getFileSystem(ppd, layout):
+    return FileSystem(generateRoot(ppd, layout))
 
 
 class FileSystem(LoggingMixIn, Operations):
@@ -368,7 +474,7 @@ class FileSystem(LoggingMixIn, Operations):
         path = path.lstrip('/')
         try:
             ret = self.root.childFromPath(path)
-            print ret
+            print '  -- ', ret
             return ret
         except KeyError:
             raise FuseOSError(errno.ENOENT)

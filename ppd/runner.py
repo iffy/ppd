@@ -283,8 +283,11 @@ def runFilesystem(args):
     from ppd.filesystem import getFileSystem
     from fuse import FUSE
     ppd = getPPD(args)
-    layout = yaml.safe_load(open(args.fslayout, 'rb'))
-    fs = getFileSystem(ppd, layout['paths'])
+    layout = None
+    if args.fslayout:
+        layout = yaml.safe_load(open(args.fslayout, 'rb'))
+    
+    fs = getFileSystem(ppd, layout)
     if not os.path.exists(args.mountpoint):
         os.makedirs(args.mountpoint)
     FUSE(fs, args.mountpoint, direct_io=True, foreground=True)

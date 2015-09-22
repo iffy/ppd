@@ -142,6 +142,13 @@ class KeyValue(object):
             self.db.execute('update keyvalues set value=? where key=?',
                 (buffer(value), key))
 
+    @autocommit
+    def get(self, key, default):
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
 
 class FileStore(object):
 
@@ -361,6 +368,19 @@ class PPD(object):
         self.objects.update(obj['_id'], obj)
         FileStore(self.db).setContent(obj['_file_id'], StringIO(content))
 
+    #-------------------------------
+    # filesystem stuff
+    #-------------------------------
+
+    @autocommit
+    def getCurrentFSLayout(self):
+        s = self.kv.get('sys:current_layout', '{}')
+        return yaml.safe_load(s)
+
+    @autocommit
+    def setCurrentFSLayout(self, layout):
+        self.kv['sys:current_layout'] = yaml.safe_dump(layout)
+        return layout
 
 
 class RuleBasedFileDumper(object):
