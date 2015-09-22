@@ -299,6 +299,7 @@ p.set_defaults(func=runFilesystem)
 p.add_argument('mountpoint',
     help='Place to mount files')
 p.add_argument('fslayout',
+    nargs="?",
     help='YAML files containing mount layout definition')
 
 

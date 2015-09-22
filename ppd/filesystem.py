@@ -378,10 +378,14 @@ class ConfigFile(BaseResource):
 
     @cache
     def getContent(self):
-        return yaml.safe_dump(self.ppd.getCurrentFSLayout())
+        return yaml.safe_dump(self.ppd.getCurrentFSLayout(),
+            default_flow_style=False)
 
     def get_size(self):
         return len(self.getContent())
+
+    def truncate(self, length):
+        return 0
 
     def read(self, size, offset):
         content = self.getContent()
@@ -400,12 +404,13 @@ class ConfigFile(BaseResource):
             data = yaml.safe_load(content)
         except Exception:
             print 'bad config'
-            return 0
+            return len(data)
         print 'data', data
         self.ppd.setCurrentFSLayout(data)
         print 'set current fs layout'
         configureRoot(self.ppd, self.root, data)
         print 'reconfigured root'
+        return len(data)
 
     def unlink(self):
         raise NotImplemented
