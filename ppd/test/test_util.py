@@ -78,6 +78,55 @@ class PPDTest(TestCase):
         self.assertEqual(objects, [id1])
 
 
+    def test_listObjects_anchor(self):
+        """
+        You can list objects anchored by certain keys.
+        """
+        i = PPD()
+        data = [
+            {'unrelated': 'object'},
+            {'host': 'foo.com', 'state': 'up'},
+            {'host': 'foo.com', 'location': 'Africa'},
+            {'host': 'foo.com', 'port': '100', 'state': 'closed'},
+            {'host': 'foo.com', 'port': '100', 'state': 'open'},
+            {'host': 'foo.com', 'port': '200', 'state': 'closed'},
+            {'host': 'bar.com', 'state': 'down'},
+        ]
+        for d in data:
+            i.addObject(d)
+
+        objects = i.listObjects(anchors=['host'])
+        self.assertEqual(len(objects), 2)
+        foo = objects[0]
+        bar = objects[1]
+        self.assertEqual(foo['host'], 'foo.com')
+        self.assertEqual(foo['state'], 'closed')
+        self.assertEqual(foo['location'], 'Africa')
+        self.assertEqual(foo['port'], '200')
+        self.assertEqual(bar['host'], 'bar.com')
+        self.assertEqual(bar['state'], 'down')
+
+        objects = i.listObjects(anchors=['host', 'port'])
+        self.assertEqual(len(objects), 4)
+        foo = objects[0]
+        self.assertEqual(foo['host'], 'foo.com')
+        self.assertEqual(foo['state'], 'up')
+        self.assertEqual(foo['location'], 'Africa')
+
+        foo_port100 = objects[1]
+        self.assertEqual(foo_port100['host'], 'foo.com')
+        self.assertEqual(foo_port100['port'], '100')
+        self.assertEqual(foo_port100['state'], 'open')
+
+        foo_port200 = objects[2]
+        self.assertEqual(foo_port200['host'], 'foo.com')
+        self.assertEqual(foo_port200['port'], '200')
+        self.assertEqual(foo_port200['state'], 'closed')
+
+        bar = objects[3]
+        self.assertEqual(bar['host'], 'bar.com')
+
+
     def test_updateObjects(self):
         """
         You can update all objects.
