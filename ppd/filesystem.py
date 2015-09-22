@@ -24,6 +24,9 @@ class BaseResource(object):
     isFile = False
     _now = time()
 
+    def exists(self):
+        return True
+
     def listChildren(self):
         raise FuseOSError(errno.ENOENT)
 
@@ -40,18 +43,20 @@ class BaseResource(object):
         return self._now
 
     def getattr(self):
-        if self.isFile:
-            return dict(st_mode=S_IFREG, st_nlink=1,
-                    st_size=self.get_size(),
-                    st_ctime=self.get_ctime(),
-                    st_mtime=self.get_mtime(),
-                    st_atime=self.get_atime()) 
-        else:
-            return dict(st_mode=(S_IFDIR | 0755),
+        if self.exists():
+            if self.isFile:
+                return dict(st_mode=S_IFREG, st_nlink=1,
+                        st_size=self.get_size(),
                         st_ctime=self.get_ctime(),
                         st_mtime=self.get_mtime(),
-                        st_atime=self.get_atime(),
-                        st_nlink=2)
+                        st_atime=self.get_atime()) 
+            else:
+                return dict(st_mode=(S_IFDIR | 0755),
+                            st_ctime=self.get_ctime(),
+                            st_mtime=self.get_mtime(),
+                            st_atime=self.get_atime(),
+                            st_nlink=2)
+        raise FuseOSError(errno.ENOENT)
 
     def child(self, segment):
         raise NotImplemented
@@ -82,6 +87,17 @@ class BaseResource(object):
     def create(self, mode):
         raise NotImplemented
 
+    def rename(self, newresource):
+        """
+        Rename this resource to the given resource.
+        """
+        raise NotImplemented
+
+    def unlink(self):
+        """
+        Delete this file.
+        """
+        raise NotImplemented
 
     # directory operations
 
@@ -200,8 +216,6 @@ class ObjectDirectory(BaseResource):
 
     def child(self, segment):
         m = self.regex.match(segment)
-        print 'match', m
-        print m.groupdict()
         pattern = self.pattern.copy()
         for k,v in m.groupdict().items():
             pattern[k] = v
@@ -219,6 +233,9 @@ class SingleObjectDirectory(BaseResource):
         self.ppd = ppd
         self.filter = filter
 
+    def exists(self):
+        return len(self.ppd.listObjects(self.filter))
+
     def listChildren(self):
         pattern = self.filter.copy()
         pattern['_file_id'] = '*'
@@ -231,21 +248,27 @@ class SingleObjectDirectory(BaseResource):
         pattern['filename'] = segment
         files = self.ppd.listObjects(pattern)
         if files:
-            return File(self.ppd, files[0]['_id'])
+            return File(self.ppd, files[0]['_id'], pattern)
         else:
             return PotentialFile(self.ppd, pattern)
 
     def mkdir(self, mode):
-        print self, 'mkdir', mode
+        pattern = {}
+        for k,v in self.filter.items():
+            if v == '*':
+                continue
+            pattern[k] = v
+        self.ppd.addObject(pattern)
 
 
 class File(BaseResource):
 
     isFile = True
 
-    def __init__(self, ppd, object_id):
+    def __init__(self, ppd, object_id, pattern):
         self.ppd = ppd
         self.object_id = object_id
+        self.pattern = pattern
 
     def get_size(self):
         content = self.ppd.getFileContents(self.object_id)
@@ -254,15 +277,45 @@ class File(BaseResource):
     def read(self, size, offset):
         return self.ppd.getFileContents(self.object_id)[offset:offset+size]
 
+    def rename(self, newresource):
+        if isinstance(newresource, PotentialFile):
+            # it's another file, just change the name.
+            print 'renaming ->', newresource.metadata['filename']
+            self.ppd.updateObjects({'filename': newresource.metadata['filename']},
+                                   {'_id': str(self.object_id)})
+        elif isinstance(newresource, File):
+            # write the file.
+            # This is probably not a good way to do this.
+            newresource.write(self.read(self.get_size(), 0), 0)
+            self.unlink()
+        else:
+            raise NotImplemented
+
     def truncate(self, length):
         print self, 'truncate', length
         self.ppd.setFileContents(self.object_id, StringIO(''))
+
+    def unlink(self):
+        obj = self.ppd.getObject(self.object_id)
+        new_obj = obj.copy()
+        for k in self.pattern:
+            if k == 'filename':
+                continue
+            new_obj.pop(k)
+        leftovers = [x for x in new_obj if not x.startswith('_')]
+        leftovers.remove('filename')
+        if leftovers:
+            # this file still has other associated metadata.  Don't delete it
+            self.ppd.replaceObject(self.object_id, new_obj)
+        else:
+            self.ppd.deleteObject(self.object_id)
 
     def write(self, data, offset):
         print self, 'write', repr(data), offset
         content = StringIO(self.ppd.getFileContents(self.object_id))
         content.seek(offset)
         content.write(data)
+        content.seek(0)
         self.ppd.setFileContents(self.object_id, content)
         return len(data)
 
@@ -275,6 +328,9 @@ class PotentialFile(BaseResource):
     def __init__(self, ppd, metadata):
         self.ppd = ppd
         self.metadata = metadata
+
+    def exists(self):
+        return False
 
     def create(self, mode):
         print self, 'create', mode
@@ -320,7 +376,7 @@ class FileSystem(LoggingMixIn, Operations):
     # ---------------------------
 
     def access(self, path, amode):
-        print 'access', path, amode
+        #print 'access', path, amode
         return 0
 
     def bmap(self, path, blocksize, idx):
@@ -391,7 +447,7 @@ class FileSystem(LoggingMixIn, Operations):
 
     def rename(self, old, new):
         print 'rename', old, new
-        self.files[new] = self.files.pop(old)
+        return self.resource(old).rename(self.resource(new))
 
     def rmdir(self, path):
         print 'rmdir', path
@@ -418,7 +474,7 @@ class FileSystem(LoggingMixIn, Operations):
 
     def unlink(self, path):
         print 'unlink', path
-        self.files.pop(path)
+        self.resource(path).unlink()
 
     def utimens(self, path, times=None):
         print 'utimens', path, times

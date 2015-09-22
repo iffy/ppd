@@ -19,6 +19,7 @@ setup(
         'structlog',
         'PyYaml',
         'ordereddict',
+        'fusepy',
     ],
     scripts=[
         'scripts/ppd',

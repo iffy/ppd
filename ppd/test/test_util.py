@@ -140,6 +140,19 @@ class PPDTest(TestCase):
         })
 
 
+    def test_replaceObject(self):
+        """
+        The object will be replaced with this new data.
+        """
+        i = PPD()
+        id1 = i.addObject({'foo': 'bar', 'baz': 'wow'})
+        i.replaceObject(id1, {'hey': 'ho'})
+        objects = i.getObject(id1)
+        self.assertEqual(objects['hey'], 'ho')
+        self.assertNotIn('foo', objects)
+        self.assertNotIn('baz', objects)
+
+
     def test_deleteObject(self):
         """
         You can delete objects by id

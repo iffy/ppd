@@ -302,6 +302,16 @@ class PPD(object):
             ret.append(new_obj)
         return ret
 
+
+    @autocommit
+    @markUpdated
+    @autoDump
+    def replaceObject(self, object_id, data):
+        """
+        Replace an object with the given data.
+        """
+        self.objects.update(object_id, data)
+
     @autocommit
     def listObjects(self, filter_glob=None, id_only=False):
         """

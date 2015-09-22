@@ -1,11 +1,10 @@
 from twisted.trial.unittest import TestCase
-from twisted.internet import protocol, defer, reactor, utils
+from twisted.internet import protocol, defer, reactor, utils, task
 from twisted.python import log
 from twisted.python.procutils import which
 from twisted.python.filepath import FilePath
 
 import sys
-import time
 import yaml
 
 from StringIO import StringIO
@@ -32,15 +31,17 @@ class ProcessProtocol(protocol.ProcessProtocol):
         self.output_started = defer.Deferred()
 
     def connectionMade(self):
+        log.msg('connection made')
+        self.transport.closeStdin()
         self.started.callback(self)
 
     def outReceived(self, data):
-        log.msg(data, system='out')
+        log.msg(data, system='stdout')
 
     def errReceived(self, data):
         if 'ready' in data and not self.output_started.called:
             self.output_started.callback(self)
-        log.msg(data, system='err')
+        log.msg(data, system='stderr')
 
     def processEnded(self, status):
         log.msg('prcessEnded: %r' % (status,))
@@ -60,12 +61,16 @@ class FileSystemTest(TestCase):
 
     def _rawStartFS(self, dbfile, mountpoint, layout_path):
         proto = ProcessProtocol()
-        all_args = ['python', '-m', 'ppd.runner',
+        
+        ex = sys.executable
+        all_args = ['python', '-u', '-m', 'ppd.runner',
             '-d', dbfile,
             'fs', mountpoint, layout_path]
+
         log.msg('spawn: %r' % (all_args,))
-        reactor.spawnProcess(proto, sys.executable, all_args,
-                env={'PYTHONPATH': '..'})
+        reactor.spawnProcess(proto, ex, all_args,
+                env={'PYTHONPATH': '..'},
+                childFDs={0:'w', 1:'r', 2:'r'})
         self.addCleanup(self.unmountPath, mountpoint)
         self.addCleanup(proto.terminate)
         return proto.started
@@ -73,6 +78,20 @@ class FileSystemTest(TestCase):
     def unmountPath(self, mountpoint):
         log.msg('unmounting: %r' % (mountpoint,))
         return utils.getProcessOutput(unmount, [mountpoint])
+
+    def waitForFileToExist(self, fp, delay=0.05):
+        d = defer.Deferred()
+        def check(d, fp):
+            if fp.exists():
+                reactor.callLater(delay, d.callback, fp)
+        lc = task.LoopingCall(check, d, fp)
+        lc.start(delay*3)
+
+        def cleanup(result, lc):
+            lc.stop()
+            return result
+        d.addBoth(cleanup, lc)
+        return d
 
     @defer.inlineCallbacks
     def startFS(self, layout):
@@ -84,9 +103,7 @@ class FileSystemTest(TestCase):
         log.msg('layout: %s' % (layout_file.path,))
         layout_file.setContent(yaml.safe_dump(layout))
         yield self._rawStartFS(dbfile, mountpoint.path, layout_file.path)
-        while not mountpoint.exists():
-            time.sleep(0.5)
-        time.sleep(0.5)
+        mountpoint = yield self.waitForFileToExist(mountpoint)
         defer.returnValue(mountpoint)
 
 
@@ -128,7 +145,6 @@ class FileSystemTest(TestCase):
                 {
                     'path': 'hosts',
                     'objdir': {
-                        'keys': ['host'],
                         'display': '{host}',
                     },
                 },
@@ -139,12 +155,95 @@ class FileSystemTest(TestCase):
         self.assertEqual(len(hosts.children()), 0, "Should start "
             "empty")
 
-        # add a file
+
+        # test ppd -> fs
+        # attach a file
         ppd = self.ppd()
         ppd.addFile(StringIO('foo'), 'foo.txt', {'host': 'foo.com'})
-        
         foo_com = hosts.child('foo.com')
         self.assertTrue(foo_com.isdir(), "Should have made a foo.com directory")
         self.assertEqual(foo_com.child('foo.txt').getContent(), 'foo',
             "Should have the foo.txt file available")
+
+        # make a host
+        ppd.addObject({'host': 'example.com'})
+        self.assertTrue(hosts.child('example.com').isdir(),
+            "Should have made directory because host exists")
+
+        # test fs -> ppd
+        # make a directory
+        bar_com = hosts.child('bar.com')
+        bar_com.makedirs()
+        objects = ppd.listObjects({'host': 'bar.com'})
+        self.assertEqual(len(objects), 1, "Should have made a bar.com host")
+        
+        # make a file
+        bar_com.child('bar.txt').setContent('content of bar.txt')
+        objects = ppd.listObjects({'filename': 'bar.txt'})
+        self.assertEqual(len(objects), 1, "Should have made a bar.txt")
+        ppd.getFileContents(objects[0]['_id'])
+
+        # delete a file
+        bar_com.child('bar.txt').remove()
+        objects = ppd.listObjects({'filename': 'bar.txt'})
+        self.assertEqual(len(objects), 0, "Should have deleted the file")
+
+        # write a file
+        fh = open(bar_com.child('bar2.txt').path, 'wb')
+        fh.write('some data\n')
+        fh.close()
+        self.assertEqual(bar_com.child('bar2.txt').getContent(),
+            'some data\n')
+        objects = ppd.listObjects({'filename': 'bar2.txt'})
+        self.assertEqual(len(objects), 1)
+        self.assertEqual(objects[0]['host'], 'bar.com')
+
+
+    @defer.inlineCallbacks
+    def test_multiple_objfiles(self):
+        """
+        You can have a directory that contains all the files related
+        to a particular key.
+        """
+        mountpoint = yield self.startFS({
+            'paths': [
+                {
+                    'path': 'hosts',
+                    'objdir': {
+                        'display': '{host}',
+                    },
+                },
+                {
+                    'path': 'ports',
+                    'objdir': {
+                        'display': '{port}',
+                    }
+                }
+            ],
+        })
+
+        hosts = mountpoint.child('hosts')
+        ports = mountpoint.child('ports')
+
+        ppd = self.ppd()
+        ppd.addFile(StringIO('foo'), 'data.txt',
+            {'host': 'foo.com', 'port': '110'})
+
+        self.assertTrue(hosts.child('foo.com').child('data.txt').exists())
+        self.assertTrue(ports.child('110').child('data.txt').exists())
+
+        ports.child('110').child('data.txt').setContent('new content')
+        self.assertEqual(hosts.child('foo.com').child('data.txt').getContent(),
+            'new content',
+            'Changing content in one place should change it in both places.')
+
+        ports.child('110').child('data.txt').remove()
+        self.assertFalse(ports.child('110').child('data.txt').exists(),
+            "ports/data.txt should no longer exist")
+        self.assertFalse(ports.child('110').exists(),
+            "ports/ should no longer exist")
+        self.assertTrue(hosts.child('foo.com').child('data.txt').exists(),
+            "Even though it was deleted in the ports/ dir, it"
+            " should still exist in the hosts/ dirs")
+
 
