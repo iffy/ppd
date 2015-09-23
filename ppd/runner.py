@@ -96,10 +96,12 @@ p.set_defaults(func=read)
 def listObjects(args):
     ppd = getPPD(args)
     meta_glob = getFilter(args)
-    objects = ppd.listObjects(meta_glob)
+    id_only = args.id
+    anchors = args.anchors
+    objects = ppd.listObjects(meta_glob, id_only=id_only,
+        anchors=anchors)
     if args.id:
-        for obj in objects:
-            args.stdout.write(str(obj['__id'])+'\n')
+        args.stdout.write('\n'.join(map(str, objects)) + '\n')
     else:
         args.stdout.write(yaml.safe_dump(objects, default_flow_style=False))
     ppd.close()
@@ -109,6 +111,11 @@ p = cmds.add_parser('list',
     parents=[filter_parser])
 p.set_defaults(func=listObjects)
 
+p.add_argument('--anchor', '-A',
+    action='append',
+    dest='anchors',
+    default=[],
+    help='Merge data anchoring on this key.  Specify multiple times')
 p.add_argument('--id', '-i',
     action='store_true',
     default=False,

@@ -12,6 +12,7 @@ import time
 import json
 from fnmatch import fnmatch
 from functools import partial, wraps
+from collections import defaultdict
 from hashlib import sha1
 
 from StringIO import StringIO
@@ -298,10 +299,12 @@ class PPD(object):
         return ret
 
     @autocommit
-    def listObjects(self, filter_glob=None, id_only=False):
+    def listObjects(self, filter_glob=None, id_only=False, anchors=None):
         """
         List objects in the object database.
         """
+        anchors = anchors or []
+
         filter_fn = None
         if filter_glob is not None:
             filter_fn = mkFilterFunc(filter_glob)
@@ -309,8 +312,25 @@ class PPD(object):
 
         if id_only:
             return [x['_id'] for x in func()]
+        elif anchors:
+            return self.groupByAnchors(func(), anchors)
         else:
             return func()
+
+    def groupByAnchors(self, results, anchors):
+        keys = []
+        _objects = defaultdict(dict)
+        anchors = set(anchors)
+        for result in results:
+            key_keys = set(result) & anchors
+            key = tuple([result[k] for k in key_keys])
+            if not key:
+                continue
+            if key not in keys:
+                keys.append(key)
+            _objects[key].update(result)
+        return [_objects[k] for k in keys]
+        
 
     @autocommit
     @markUpdated
